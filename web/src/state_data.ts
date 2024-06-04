@@ -21,20 +21,6 @@ export const narrow_term_schema = z.object({
 export type NarrowTerm = z.output<typeof narrow_term_schema>;
 // Sync this with zerver.lib.events.do_events_register.
 
-const one_time_notice_schema = z.object({
-    name: z.string(),
-    type: z.literal("one_time_notice"),
-});
-
-/* We may introduce onboarding step of types other than 'one time notice'
-in future. Earlier, we had 'hotspot' and 'one time notice' as the two
-types. We can simply do:
-const onboarding_step_schema = z.union([one_time_notice_schema, other_type_schema]);
-to avoid major refactoring when new type is introduced in the future. */
-const onboarding_step_schema = one_time_notice_schema;
-
-export type OnboardingStep = z.output<typeof onboarding_step_schema>;
-
 export const custom_profile_field_schema = z.object({
     display_in_profile_summary: z.optional(z.boolean()),
     field_data: z.string(),
@@ -51,12 +37,12 @@ export type CustomProfileField = z.output<typeof custom_profile_field_schema>;
 export const current_user_schema = z.object({
     avatar_source: z.string(),
     delivery_email: z.string(),
+    has_zoom_token: z.boolean(),
     is_admin: z.boolean(),
     is_billing_admin: z.boolean(),
     is_guest: z.boolean(),
     is_moderator: z.boolean(),
     is_owner: z.boolean(),
-    onboarding_steps: z.array(onboarding_step_schema),
     user_id: z.number(),
 });
 // Sync this with zerver.lib.events.do_events_register.
@@ -73,6 +59,7 @@ export const realm_schema = z.object({
         USER: z.object({id: z.number(), name: z.string()}),
         PRONOUNS: z.object({id: z.number(), name: z.string()}),
     }),
+    demo_organization_scheduled_deletion_date: z.optional(z.number()),
     max_avatar_file_size_mib: z.number(),
     max_file_upload_size_mib: z.number(),
     max_icon_file_size_mib: z.number(),
@@ -101,6 +88,7 @@ export const realm_schema = z.object({
     realm_create_private_stream_policy: z.number(),
     realm_create_public_stream_policy: z.number(),
     realm_create_web_public_stream_policy: z.number(),
+    realm_date_created: z.number(),
     realm_default_code_block_language: z.string(),
     realm_default_external_accounts: z.record(
         z.string(),
@@ -177,7 +165,7 @@ export const realm_schema = z.object({
     realm_require_unique_names: z.boolean(),
     realm_signup_announcements_stream_id: z.number(),
     realm_upload_quota_mib: z.nullable(z.number()),
-    realm_uri: z.string(),
+    realm_url: z.string(),
     realm_user_group_edit_policy: z.number(),
     realm_video_chat_provider: z.number(),
     realm_waiting_period_threshold: z.number(),

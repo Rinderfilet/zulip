@@ -41,7 +41,9 @@ const muted_users_ui = mock_esm("../src/muted_users_ui");
 const narrow_title = mock_esm("../src/narrow_title");
 const navbar_alerts = mock_esm("../src/navbar_alerts");
 const pm_list = mock_esm("../src/pm_list");
-const reactions = mock_esm("../src/reactions");
+const reactions = mock_esm("../src/reactions", {
+    generate_clean_reactions() {},
+});
 const realm_icon = mock_esm("../src/realm_icon");
 const realm_logo = mock_esm("../src/realm_logo");
 const realm_playground = mock_esm("../src/realm_playground");
@@ -121,10 +123,10 @@ realm.realm_description = "already set description";
 // For data-oriented modules, just use them, don't stub them.
 const alert_words = zrequire("alert_words");
 const emoji = zrequire("emoji");
-const message_helper = zrequire("message_helper");
 const message_store = zrequire("message_store");
 const people = zrequire("people");
 const user_status = zrequire("user_status");
+const onboarding_steps = zrequire("onboarding_steps");
 
 const server_events_dispatch = zrequire("server_events_dispatch");
 
@@ -144,7 +146,7 @@ people.add_active_user(me);
 people.add_active_user(test_user);
 people.initialize_current_user(me.user_id);
 
-message_helper.process_new_message(test_message);
+message_store.update_message_cache(test_message);
 
 const realm_emoji = {};
 const emoji_codes = zrequire("../../static/generated/emoji/emoji_codes.json");
@@ -320,10 +322,14 @@ run_test("default_streams", ({override}) => {
 });
 
 run_test("onboarding_steps", () => {
-    current_user.onboarding_steps = [];
+    onboarding_steps.initialize({onboarding_steps: []});
     const event = event_fixtures.onboarding_steps;
+    const one_time_notices = new Set();
+    for (const onboarding_step of event.onboarding_steps) {
+        one_time_notices.add(onboarding_step.name);
+    }
     dispatch(event);
-    assert_same(current_user.onboarding_steps, event.onboarding_steps);
+    assert_same(onboarding_steps.ONE_TIME_NOTICES_TO_DISPLAY, one_time_notices);
 });
 
 run_test("invites_changed", ({override}) => {

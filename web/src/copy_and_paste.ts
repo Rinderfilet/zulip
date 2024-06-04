@@ -84,6 +84,7 @@ function construct_copy_div($div: JQuery, start_id: number, end_id: number): voi
     const copy_rows = rows.visible_range(start_id, end_id);
 
     const $start_row = copy_rows[0];
+    assert($start_row !== undefined);
     const $start_recipient_row = rows.get_message_recipient_row($start_row);
     const start_recipient_row_id = rows.id_for_recipient_row($start_recipient_row);
     let should_include_start_recipient_header = false;
@@ -131,7 +132,7 @@ function select_div($div: JQuery, selection: Selection): void {
         background: "#FFF",
     }).attr("id", "copytempdiv");
     $("body").append($div);
-    selection.selectAllChildren($div[0]);
+    selection.selectAllChildren($div[0]!);
 }
 
 function remove_div(_div: JQuery, ranges: Range[]): void {
@@ -173,11 +174,21 @@ export function copy_handler(): void {
     const skip_same_td_check = analysis.skip_same_td_check;
     const $div = $("<div>");
 
-    if (start_id === undefined || end_id === undefined) {
+    if (start_id === undefined || end_id === undefined || start_id > end_id) {
         // In this case either the starting message or the ending
         // message is not defined, so this is definitely not a
         // multi-message selection and we can let the browser handle
         // the copy.
+        //
+        // Also, if our logic is not sound about the selection range
+        // (start_id > end_id), we let the browser handle the copy.
+        //
+        // NOTE: `startContainer (~ start_id)` and `endContainer (~ end_id)`
+        // of a `Range` are always from top to bottom in the DOM tree, independent
+        // of the direction of the selection.
+        // TODO: Add a reference for this statement, I just tested
+        // it in console for various selection directions and found this
+        // to be the case not sure why there is no online reference for it.
         document.execCommand("copy");
         return;
     }
@@ -311,6 +322,10 @@ function get_end_tr_from_endc($endc: JQuery<Node>): JQuery {
         }
         // If it's not in a .message_row, it's probably in a .message_header and
         // we can use the last message from the previous recipient_row.
+        // NOTE: It is possible that the selection started and ended inside the
+        // message header and in that case we would be returning the message before
+        // the selected header if it exists, but that is not the purpose of this
+        // function to handle.
         if ($endc.parents(".message_header").length > 0) {
             const $overflow_recipient_row = $endc.parents(".recipient_row").first();
             return $overflow_recipient_row.prev(".recipient_row").children(".message_row").last();
@@ -503,7 +518,7 @@ export function paste_handler_converter(paste_html: string): string {
                 (text_children = [...node.childNodes].filter(
                     (child) => child.textContent !== null && child.textContent.trim() !== "",
                 )).length === 1 &&
-                text_children[0].nodeName === "CODE"
+                text_children[0]?.nodeName === "CODE"
             );
         },
 
@@ -590,7 +605,7 @@ function is_safe_url_paste_target($textarea: JQuery<HTMLTextAreaElement>): boole
     // Look at the two characters before the start of the original
     // range in search of the tell-tale `](` from existing Markdown
     // link syntax
-    const possible_markdown_link_markers = $textarea[0].value.slice(range.start - 2, range.start);
+    const possible_markdown_link_markers = $textarea[0]!.value.slice(range.start - 2, range.start);
 
     if (possible_markdown_link_markers === "](") {
         return false;

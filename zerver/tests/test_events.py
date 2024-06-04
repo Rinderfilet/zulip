@@ -232,7 +232,6 @@ from zerver.models import (
     RealmUserDefault,
     Service,
     Stream,
-    UserGroup,
     UserMessage,
     UserPresence,
     UserProfile,
@@ -1776,9 +1775,9 @@ class NormalActionsTest(BaseAction):
         moderators_group = NamedUserGroup.objects.get(
             name=SystemGroups.MODERATORS, realm=self.user_profile.realm, is_system_group=True
         )
-        user_group = UserGroup.objects.create(realm=self.user_profile.realm)
-        user_group.direct_members.set([othello])
-        user_group.direct_subgroups.set([moderators_group])
+        user_group = self.create_or_update_anonymous_group_for_setting(
+            [othello], [moderators_group]
+        )
 
         with self.verify_action() as events:
             check_add_user_group(
@@ -1812,17 +1811,25 @@ class NormalActionsTest(BaseAction):
         # Test can_mention_group setting update
         with self.verify_action() as events:
             do_change_user_group_permission_setting(
-                backend, "can_mention_group", moderators_group, acting_user=None
+                backend,
+                "can_mention_group",
+                moderators_group,
+                old_setting_api_value=everyone_group.id,
+                acting_user=None,
             )
         check_user_group_update("events[0]", events[0], "can_mention_group")
         self.assertEqual(events[0]["data"]["can_mention_group"], moderators_group.id)
 
-        setting_group = UserGroup.objects.create(realm=self.user_profile.realm)
-        setting_group.direct_members.set([othello.id])
-        setting_group.direct_subgroups.set([moderators_group.id])
+        setting_group = self.create_or_update_anonymous_group_for_setting(
+            [othello], [moderators_group]
+        )
         with self.verify_action() as events:
             do_change_user_group_permission_setting(
-                backend, "can_mention_group", setting_group, acting_user=None
+                backend,
+                "can_mention_group",
+                setting_group,
+                old_setting_api_value=moderators_group.id,
+                acting_user=None,
             )
         check_user_group_update("events[0]", events[0], "can_mention_group")
         self.assertEqual(
@@ -3119,6 +3126,27 @@ class NormalActionsTest(BaseAction):
             message_type="stream",
             num_message_ids=1,
             is_legacy=True,
+        )
+
+    def test_do_delete_first_message_in_stream(self) -> None:
+        hamlet = self.example_user("hamlet")
+        self.subscribe(hamlet, "test_stream1")
+        msg_id = self.send_stream_message(hamlet, "test_stream1")
+        msg_id_2 = self.send_stream_message(hamlet, "test_stream1")
+        message = Message.objects.get(id=msg_id)
+        with self.verify_action(state_change_expected=True, num_events=2) as events:
+            do_delete_messages(self.user_profile.realm, [message])
+
+        check_stream_update("events[0]", events[0])
+        self.assertEqual(events[0]["property"], "first_message_id")
+        self.assertEqual(events[0]["value"], msg_id_2)
+
+        check_delete_message(
+            "events[1]",
+            events[1],
+            message_type="stream",
+            num_message_ids=1,
+            is_legacy=False,
         )
 
     def test_do_delete_message_personal(self) -> None:

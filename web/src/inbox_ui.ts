@@ -286,7 +286,7 @@ function format_dm(
 
     let user_circle_class: string | false | undefined;
     let is_bot = false;
-    if (recipient_ids.length === 1) {
+    if (recipient_ids.length === 1 && recipient_ids[0] !== undefined) {
         is_bot = people.get_by_user_id(recipient_ids[0]).is_bot;
         user_circle_class = is_bot ? false : buddy_data.get_user_circle_class(recipient_ids[0]);
     }
@@ -312,7 +312,7 @@ function format_dm(
 function insert_dms(keys_to_insert: string[]): void {
     const sorted_keys = [...dms_dict.keys()];
     // If we need to insert at the top, we do it separately to avoid edge case in loop below.
-    if (keys_to_insert.includes(sorted_keys[0])) {
+    if (sorted_keys[0] !== undefined && keys_to_insert.includes(sorted_keys[0])) {
         $("#inbox-direct-messages-container").prepend(
             $(render_inbox_row(dms_dict.get(sorted_keys[0]))),
         );
@@ -324,7 +324,7 @@ function insert_dms(keys_to_insert: string[]): void {
         }
 
         if (keys_to_insert.includes(key)) {
-            const $previous_row = get_row_from_conversation_key(sorted_keys[i - 1]);
+            const $previous_row = get_row_from_conversation_key(sorted_keys[i - 1]!);
             $previous_row.after($(render_inbox_row(dms_dict.get(key))));
         }
     }
@@ -462,7 +462,7 @@ function insert_stream(
     if (stream_index === 0) {
         $("#inbox-streams-container").prepend($(rendered_stream));
     } else {
-        const previous_stream_key = sorted_stream_keys[stream_index - 1];
+        const previous_stream_key = sorted_stream_keys[stream_index - 1]!;
         $(rendered_stream).insertAfter(get_stream_container(previous_stream_key));
     }
     return !streams_dict.get(stream_key)!.is_hidden;
@@ -473,7 +473,7 @@ function insert_topics(keys: string[], stream_key: string): void {
     assert(stream_topics_data !== undefined);
     const sorted_keys = [...stream_topics_data.keys()];
     // If we need to insert at the top, we do it separately to avoid edge case in loop below.
-    if (keys.includes(sorted_keys[0])) {
+    if (sorted_keys[0] !== undefined && keys.includes(sorted_keys[0])) {
         const $stream = get_stream_container(stream_key);
         $stream
             .find(".inbox-topic-container")
@@ -486,7 +486,7 @@ function insert_topics(keys: string[], stream_key: string): void {
         }
 
         if (keys.includes(key)) {
-            const $previous_row = get_row_from_conversation_key(sorted_keys[i - 1]);
+            const $previous_row = get_row_from_conversation_key(sorted_keys[i - 1]!);
             $previous_row.after($(render_inbox_row(stream_topics_data.get(key))));
         }
     }
@@ -1017,7 +1017,9 @@ function set_list_focus(input_key?: string): void {
         }
     }
 
-    $($cols_to_focus[col_focus]).trigger("focus");
+    const col_to_focus = $cols_to_focus[col_focus];
+    assert(col_to_focus !== undefined);
+    $(col_to_focus).trigger("focus");
 }
 
 function focus_filters_dropdown(): void {
@@ -1350,7 +1352,7 @@ function center_focus_if_offscreen(): void {
     // Move focused to row to visible area so to avoid
     // it being under compose box or inbox filters.
     const $elt = $(".inbox-row:focus, .inbox-header:focus");
-    if ($elt.length === 0) {
+    if ($elt[0] === undefined) {
         return;
     }
 
@@ -1377,23 +1379,36 @@ function move_focus_to_visible_area(): void {
         return;
     }
 
-    if (row_focus >= $all_rows.length) {
+    let row = $all_rows[row_focus];
+    if (row === undefined) {
         row_focus = $all_rows.length - 1;
+        row = $all_rows[row_focus];
+        assert(row !== undefined);
         revive_current_focus();
     }
 
-    const elt_pos = $all_rows[row_focus].getBoundingClientRect();
+    const elt_pos = row.getBoundingClientRect();
     if (is_element_visible(elt_pos)) {
         return;
     }
 
     const INBOX_ROW_HEIGHT = 30;
-    const position = $("#inbox-filters")[0].getBoundingClientRect();
+    const position = $("#inbox-filters")[0]!.getBoundingClientRect();
     const inbox_center_x = (position.left + position.right) / 2;
     // We are aiming to get the first row if it is completely visible or the second row.
     const inbox_row_below_filters = position.bottom + INBOX_ROW_HEIGHT;
     const element_in_row = document.elementFromPoint(inbox_center_x, inbox_row_below_filters);
-    assert(element_in_row !== null);
+    if (!element_in_row) {
+        // `element_in_row` can be `null` according to MDN if:
+        // "If the specified point is outside the visible bounds of the document or
+        // either coordinate is negative, the result is null."
+        // https://developer.mozilla.org/en-US/docs/Web/API/Document/elementFromPoint
+        // This means by the time we reached here user has already scrolled past the
+        // row and it is no longer visible. So, we just return and let the next call
+        // to `move_focus_to_visible_area` handle it.
+        return;
+    }
+
     const $element_in_row = $(element_in_row);
 
     let $inbox_row = $element_in_row.closest(".inbox-row");

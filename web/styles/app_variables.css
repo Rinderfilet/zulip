@@ -58,6 +58,13 @@
     --right-sidebar-width: 250px;
     --left-sidebar-header-icon-width: 15px;
 
+    /* We base sidebar row heights on their line heights.
+       Prominent rows include things like headers (e.g., VIEWS)
+       as well as navigation items. Everything else takes
+       the smaller line-height. */
+    --line-height-sidebar-row-prominent: 1.7142em; /* 24px / 14px em */
+    --line-height-sidebar-row: 1.5714em; /* 22px / 14px em */
+
     /* Tippy popover related values */
     --navbar-popover-menu-min-width: 230px;
     --message-actions-popover-min-width: 230px;
@@ -71,6 +78,9 @@
     --markdown-interelement-doubled-space-px: calc(
         var(--markdown-interelement-space-px) * 2
     );
+
+    /* Legacy values */
+    --legacy-body-line-height-unitless: calc(20 / 14);
 
     .more-dense-mode {
         /* The legacy values here are not altered by JavaScript */
@@ -498,6 +508,8 @@
     --color-background-emoji-picker-emoji-reacted: hsl(195deg 50% 95%);
     --color-border-emoji-picker-emoji-reacted: hsl(195deg 52% 79%);
     --color-background-emoji-picker-emoji-reacted-focus: hsl(195deg 55% 88%);
+    /* Same color as background color of header / footer */
+    --color-border-emoji-picker-tippy-arrow: hsl(0deg 0% 93%);
 }
 
 %dark-theme {
@@ -800,6 +812,8 @@
     --color-border-emoji-picker-emoji-reacted: hsl(0deg 0% 0% / 90%);
     --color-background-emoji-picker-emoji-reacted-focus: hsl(0deg 0% 20% / 70%);
     --color-border-add-subscription-button-focus: hsl(0deg 0% 67%);
+    /* Same color as background color of header / footer */
+    --color-border-emoji-picker-tippy-arrow: hsl(211.58deg 33.33% 11.18%);
 }
 
 @media screen {

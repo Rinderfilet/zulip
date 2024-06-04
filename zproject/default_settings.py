@@ -191,6 +191,7 @@ MEMCACHED_LOCATION = "127.0.0.1:11211"
 MEMCACHED_USERNAME = None if get_secret("memcached_password") is None else "zulip@localhost"
 RABBITMQ_HOST = "127.0.0.1"
 RABBITMQ_PORT = 5672
+RABBITMQ_VHOST = "/"
 RABBITMQ_USERNAME = "zulip"
 RABBITMQ_USE_TLS = False
 REDIS_HOST = "127.0.0.1"
@@ -634,3 +635,9 @@ CAN_ACCESS_ALL_USERS_GROUP_LIMITS_PRESENCE = False
 SIGNED_ACCESS_TOKEN_VALIDITY_IN_SECONDS = 60
 
 CUSTOM_AUTHENTICATION_WRAPPER_FUNCTION: Optional[Callable[..., Any]] = None
+
+# Whether we allow settings to be set to a collection of users and
+# groups as described in api_docs/group-setting-values.md. Set to
+# False in production, as we can only handle named user groups in the
+# web app settings UI.
+ALLOW_ANONYMOUS_GROUP_VALUED_SETTINGS = False

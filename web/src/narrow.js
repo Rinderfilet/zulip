@@ -92,6 +92,10 @@ export function update_hash_to_match_filter(filter, trigger) {
     }
     const new_hash = hash_util.search_terms_to_hash(filter.terms());
     changehash(new_hash, trigger);
+
+    if (stream_list.is_zoomed_in()) {
+        browser_history.update_current_history_state_data({show_more_topics: true});
+    }
 }
 
 function create_and_update_message_list(filter, id_info, opts) {
@@ -166,6 +170,7 @@ function create_and_update_message_list(filter, id_info, opts) {
     // workflow we have which calls `narrow.activate` after hash is updated.
     if (opts.change_hash) {
         update_hash_to_match_filter(filter, opts.trigger);
+        opts.show_more_topics = history.state?.show_more_topics ?? false;
     }
 
     // Show the new set of messages. It is important to set message_lists.current to
@@ -175,6 +180,39 @@ function create_and_update_message_list(filter, id_info, opts) {
     // reflect the requested narrow.
     message_lists.update_current_message_list(msg_list);
     return {msg_list, restore_rendered_list};
+}
+
+function handle_post_message_list_change(
+    id_info,
+    msg_list,
+    opts,
+    select_immediately,
+    select_opts,
+    then_select_offset,
+) {
+    // Important: We need to consider opening the compose box
+    // before calling render_message_list_with_selected_message, so that the logic in
+    // recenter_view for positioning the currently selected
+    // message can take into account the space consumed by the
+    // open compose box.
+    compose_actions.on_narrow(opts);
+
+    if (select_immediately) {
+        render_message_list_with_selected_message({
+            id_info,
+            select_offset: then_select_offset,
+            msg_list: message_lists.current,
+            select_opts,
+        });
+    }
+
+    handle_post_view_change(msg_list, opts);
+
+    unread_ui.update_unread_banner();
+
+    // It is important to call this after other important updates
+    // like narrow filter and compose recipients happen.
+    compose_recipient.handle_middle_pane_transition();
 }
 
 export function activate(raw_terms, opts) {
@@ -234,9 +272,6 @@ export function activate(raw_terms, opts) {
         return;
     }
 
-    // Use to determine if user read any unread messages outside the combined feed.
-    const was_narrowed_already = message_lists.current?.narrowed;
-
     // Since narrow.activate is called directly from various
     // places in our code without passing through hashchange,
     // we need to check if the narrow is allowed for spectator here too.
@@ -263,6 +298,7 @@ export function activate(raw_terms, opts) {
         then_select_offset: undefined,
         change_hash: true,
         trigger: "unknown",
+        show_more_topics: false,
         ...opts,
     };
 
@@ -270,7 +306,7 @@ export function activate(raw_terms, opts) {
     const span_data = {
         op: "function",
         description: "narrow",
-        data: {was_narrowed_already, raw_terms, trigger: opts.trigger},
+        data: {raw_terms, trigger: opts.trigger},
     };
     let span;
     if (!existing_span) {
@@ -590,29 +626,14 @@ export function activate(raw_terms, opts) {
         assert(select_opts !== undefined);
         assert(select_immediately !== undefined);
 
-        // Important: We need to consider opening the compose box
-        // before calling render_message_list_with_selected_message, so that the logic in
-        // recenter_view for positioning the currently selected
-        // message can take into account the space consumed by the
-        // open compose box.
-        compose_actions.on_narrow(opts);
-
-        if (select_immediately) {
-            render_message_list_with_selected_message({
-                id_info,
-                select_offset: then_select_offset,
-                msg_list: message_lists.current,
-                select_opts,
-            });
-        }
-
-        handle_post_view_change(msg_list);
-
-        unread_ui.update_unread_banner();
-
-        // It is important to call this after other important updates
-        // like narrow filter and compose recipients happen.
-        compose_recipient.handle_middle_pane_transition();
+        handle_post_message_list_change(
+            id_info,
+            msg_list,
+            opts,
+            select_immediately,
+            select_opts,
+            then_select_offset,
+        );
 
         const post_span = span.startChild({
             op: "function",
@@ -1086,7 +1107,7 @@ export function to_compose_target() {
     }
 }
 
-function handle_post_view_change(msg_list) {
+function handle_post_view_change(msg_list, opts) {
     const filter = msg_list.data.filter;
     scheduled_messages_feed_ui.update_schedule_message_indicator();
     typing_events.render_notifications_for_narrow();
@@ -1103,7 +1124,7 @@ function handle_post_view_change(msg_list) {
     message_view_header.render_title_area();
     narrow_title.update_narrow_title(filter);
     left_sidebar_navigation_area.handle_narrow_activated(filter);
-    stream_list.handle_narrow_activated(filter);
+    stream_list.handle_narrow_activated(filter, opts.change_hash, opts.show_more_topics);
     pm_list.handle_narrow_activated(filter);
     activity_ui.build_user_sidebar();
 }

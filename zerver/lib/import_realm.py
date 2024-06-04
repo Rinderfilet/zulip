@@ -81,6 +81,7 @@ from zerver.models import (
     UserTopic,
 )
 from zerver.models.groups import SystemGroups
+from zerver.models.presence import PresenceSequence
 from zerver.models.realms import get_realm
 from zerver.models.recipients import get_huddle_hash
 from zerver.models.users import get_system_bot, get_user_profile_by_id
@@ -116,6 +117,7 @@ ID_MAP: Dict[str, Dict[int, int]] = {
     "subscription": {},
     "defaultstream": {},
     "onboardingstep": {},
+    "presencesequence": {},
     "reaction": {},
     "realmauthenticationmethod": {},
     "realmemoji": {},
@@ -324,14 +326,17 @@ def fix_customprofilefield(data: TableData) -> None:
 
 
 def fix_message_rendered_content(
-    realm: Realm, sender_map: Dict[int, Record], messages: List[Record]
+    realm: Realm,
+    sender_map: Dict[int, Record],
+    messages: List[Record],
+    content_key: str = "content",
+    rendered_content_key: str = "rendered_content",
 ) -> None:
     """
-    This function sets the rendered_content of all the messages
-    after the messages have been imported from a non-Zulip platform.
+    This function sets the rendered_content of the messages we're importing.
     """
     for message in messages:
-        if message["rendered_content"] is not None:
+        if message[rendered_content_key] is not None:
             # For Zulip->Zulip imports, we use the original rendered
             # Markdown; this avoids issues where e.g. a mention can no
             # longer render properly because a user has changed their
@@ -340,7 +345,7 @@ def fix_message_rendered_content(
             # However, we still need to update the data-user-id and
             # similar values stored on mentions, stream mentions, and
             # similar syntax in the rendered HTML.
-            soup = BeautifulSoup(message["rendered_content"], "html.parser")
+            soup = BeautifulSoup(message[rendered_content_key], "html.parser")
 
             user_mentions = soup.findAll("span", {"class": "user-mention"})
             if len(user_mentions) != 0:
@@ -357,7 +362,7 @@ def fix_message_rendered_content(
                     old_user_id = int(mention["data-user-id"])
                     if old_user_id in user_id_map:
                         mention["data-user-id"] = str(user_id_map[old_user_id])
-                message["rendered_content"] = str(soup)
+                message[rendered_content_key] = str(soup)
 
             stream_mentions = soup.findAll("a", {"class": "stream"})
             if len(stream_mentions) != 0:
@@ -366,7 +371,7 @@ def fix_message_rendered_content(
                     old_stream_id = int(mention["data-stream-id"])
                     if old_stream_id in stream_id_map:
                         mention["data-stream-id"] = str(stream_id_map[old_stream_id])
-                message["rendered_content"] = str(soup)
+                message[rendered_content_key] = str(soup)
 
             user_group_mentions = soup.findAll("span", {"class": "user-group-mention"})
             if len(user_group_mentions) != 0:
@@ -375,11 +380,11 @@ def fix_message_rendered_content(
                     old_user_group_id = int(mention["data-user-group-id"])
                     if old_user_group_id in user_group_id_map:
                         mention["data-user-group-id"] = str(user_group_id_map[old_user_group_id])
-                message["rendered_content"] = str(soup)
+                message[rendered_content_key] = str(soup)
             continue
 
         try:
-            content = message["content"]
+            content = message[content_key]
 
             sender_id = message["sender_id"]
             sender = sender_map[sender_id]
@@ -399,7 +404,7 @@ def fix_message_rendered_content(
                 translate_emoticons=translate_emoticons,
             ).rendered_content
 
-            message["rendered_content"] = rendered_content
+            message[rendered_content_key] = rendered_content
             if "scheduled_timestamp" not in message:
                 # This logic runs also for ScheduledMessage, which doesn't use
                 # the rendered_content_version field.
@@ -413,6 +418,30 @@ def fix_message_rendered_content(
             logging.warning(
                 "Error in Markdown rendering for message ID %s; continuing", message["id"]
             )
+
+
+def fix_message_edit_history(
+    realm: Realm, sender_map: Dict[int, Record], messages: List[Record]
+) -> None:
+    user_id_map = ID_MAP["user_profile"]
+    for message in messages:
+        edit_history_json = message.get("edit_history")
+        if not edit_history_json:
+            continue
+
+        edit_history = orjson.loads(edit_history_json)
+        for edit_history_message_dict in edit_history:
+            edit_history_message_dict["user_id"] = user_id_map[edit_history_message_dict["user_id"]]
+
+        fix_message_rendered_content(
+            realm,
+            sender_map,
+            messages=edit_history,
+            content_key="prev_content",
+            rendered_content_key="prev_rendered_content",
+        )
+
+        message["edit_history"] = orjson.dumps(edit_history).decode()
 
 
 def current_table_ids(data: TableData, table: TableName) -> List[int]:
@@ -1036,6 +1065,8 @@ def do_import_realm(import_dir: Path, subdomain: str, processes: int = 1) -> Rea
     update_model_ids(UserProfile, data, "user_profile")
     if "zerver_usergroup" in data:
         update_model_ids(UserGroup, data, "usergroup")
+    if "zerver_presencesequence" in data:
+        update_model_ids(PresenceSequence, data, "presencesequence")
 
     # Now we prepare to import the Realm table
     re_map_foreign_keys(
@@ -1071,6 +1102,13 @@ def do_import_realm(import_dir: Path, subdomain: str, processes: int = 1) -> Rea
                 setattr(realm, permission_configuration.id_field_name, -1)
 
         realm.save()
+
+        if "zerver_presencesequence" in data:
+            re_map_foreign_keys(data, "zerver_presencesequence", "realm", related_table="realm")
+            bulk_import_model(data, PresenceSequence)
+        else:
+            # We need to enforce the invariant that every realm must have a PresenceSequence.
+            PresenceSequence.objects.create(realm=realm, last_update_id=0)
 
         if "zerver_usergroup" in data:
             re_map_foreign_keys(data, "zerver_usergroup", "realm", related_table="realm")
@@ -1683,6 +1721,9 @@ def import_message_data(realm: Realm, sender_map: Dict[int, Record], import_dir:
         )
         logging.info("Successfully rendered Markdown for message batch")
 
+        fix_message_edit_history(
+            realm=realm, sender_map=sender_map, messages=data["zerver_message"]
+        )
         # A LOT HAPPENS HERE.
         # This is where we actually import the message data.
         bulk_import_model(data, Message)

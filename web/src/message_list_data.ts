@@ -1,3 +1,5 @@
+import assert from "minimalistic-assert";
+
 import * as blueslip from "./blueslip";
 import {FetchStatus} from "./fetch_status";
 import type {Filter} from "./filter";
@@ -42,7 +44,7 @@ export class MessageListData {
     _selected_id: number;
     predicate?: (message: Message) => boolean;
     // This is a callback that is called when messages are added to the message list.
-    add_messages_callback?: (messages: Message[]) => void;
+    add_messages_callback?: (messages: Message[], recipient_order_changed: boolean) => void;
 
     // MessageListData is a core data structure for keeping track of a
     // contiguous block of messages matching a given narrow that can
@@ -127,12 +129,7 @@ export class MessageListData {
         if (i === undefined) {
             return undefined;
         }
-
-        if (i === 0) {
-            return undefined;
-        }
-
-        return this._items[i - 1].id;
+        return this._items[i - 1]?.id;
     }
 
     next(): number | undefined {
@@ -141,28 +138,14 @@ export class MessageListData {
         if (i === undefined) {
             return undefined;
         }
-
-        if (i + 1 >= this._items.length) {
-            return undefined;
-        }
-
-        return this._items[i + 1].id;
+        return this._items[i + 1]?.id;
     }
 
     is_at_end(): boolean {
         if (this._selected_id === -1) {
             return false;
         }
-
-        const n = this._items.length;
-
-        if (n === 0) {
-            return false;
-        }
-
-        const last_msg = this._items[n - 1];
-
-        return last_msg.id === this._selected_id;
+        return this.last()?.id === this._selected_id;
     }
 
     clear(): void {
@@ -250,7 +233,7 @@ export class MessageListData {
                 return true;
             }
 
-            const recipient_id = Number.parseInt(recipients[0], 10);
+            const recipient_id = Number.parseInt(recipients[0]!, 10);
             return (
                 !muted_users.is_user_muted(recipient_id) &&
                 !muted_users.is_user_muted(message.sender_id)
@@ -332,7 +315,14 @@ export class MessageListData {
         }
 
         if (this.add_messages_callback) {
-            this.add_messages_callback(messages);
+            // If we only added old messages, last message for any of the existing recipients didn't change.
+            // Although, it maybe have resulted in new recipients being added which should be handled by the caller.
+            const recipient_order_changed = !(
+                top_messages.length > 0 &&
+                bottom_messages.length === 0 &&
+                interior_messages.length === 0
+            );
+            this.add_messages_callback(messages, recipient_order_changed);
         }
 
         const info = {
@@ -444,49 +434,53 @@ export class MessageListData {
 
         let closest = this._lower_bound(id);
 
-        if (closest < items.length && id === items[closest].id) {
-            return items[closest].id;
+        if (id === items[closest]?.id) {
+            return id;
         }
 
         const potential_closest_matches = [];
-        if (closest > 0 && this._is_localonly_id(items[closest - 1].id)) {
+        let prev_item;
+        while (
+            (prev_item = items[closest - 1]) !== undefined &&
+            this._is_localonly_id(prev_item.id)
+        ) {
             // Since we treated all blocks of local ids as their left-most-non-local message
             // for lower_bound purposes, find the real leftmost index (first non-local id)
-            do {
-                potential_closest_matches.push(closest);
-                closest -= 1;
-            } while (closest > 0 && this._is_localonly_id(items[closest - 1].id));
+            potential_closest_matches.push(closest);
+            closest -= 1;
         }
         potential_closest_matches.push(closest);
 
-        if (closest === items.length) {
-            closest = closest - 1;
+        let item = items[closest];
+        if (item === undefined) {
+            item = items[closest - 1];
         } else {
             // Any of the ids that we skipped over (due to them being local-only) might be the
             // closest ID to the desired one, in case there is no exact match.
             potential_closest_matches.unshift(closest - 1);
-            let best_match = items[closest].id;
+            let best_match = item.id;
 
             for (const potential_idx of potential_closest_matches) {
                 if (potential_idx < 0) {
                     continue;
                 }
-                const item = items[potential_idx];
+                const potential_item = items[potential_idx];
 
-                if (item === undefined) {
+                if (potential_item === undefined) {
                     blueslip.warn("Invalid potential_idx: " + potential_idx);
                     continue;
                 }
 
-                const potential_match = item.id;
+                const potential_match = potential_item.id;
                 // If the potential id is the closest to the requested, save that one
                 if (Math.abs(id - potential_match) < Math.abs(best_match - id)) {
                     best_match = potential_match;
-                    closest = potential_idx;
+                    item = potential_item;
                 }
             }
         }
-        return items[closest].id;
+        assert(item !== undefined);
+        return item.id;
     }
 
     advance_past_messages(msg_ids: number[]): void {
@@ -500,7 +494,7 @@ export class MessageListData {
 
         let idx = this.selected_idx() + 1;
         while (idx < this._items.length) {
-            const msg_id = this._items[idx].id;
+            const msg_id = this._items[idx]!.id;
             if (!id_set.has(msg_id)) {
                 break;
             }

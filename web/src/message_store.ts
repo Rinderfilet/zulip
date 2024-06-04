@@ -1,7 +1,9 @@
+import _ from "lodash";
+
 import * as blueslip from "./blueslip";
 import * as people from "./people";
-import type {RawReaction} from "./reactions";
-import type {Submessage, TopicLink} from "./types";
+import type {Submessage} from "./submessage";
+import type {TopicLink} from "./types";
 import type {UserStatusEmojiInfo} from "./user_status";
 
 const stored_messages = new Map<number, Message>();
@@ -68,13 +70,17 @@ export type RawMessage = {
     | {
           type: "stream";
           stream_id: number;
-          subject: string;
+          // Messages that come from the server use `subject`.
+          // Messages that come from `send_message` use `topic`.
+          subject?: string;
+          topic?: string;
           topic_links: TopicLink[];
       }
 ) &
     MatchedMessage;
 
-// We add these boolean properties to Raw message in `message_store.set_message_booleans` method.
+// We add these boolean properties to Raw message in
+// `message_store.convert_raw_message_to_message_with_booleans` method.
 export type MessageWithBooleans = (
     | Omit<RawMessage & {type: "private"}, "flags">
     | Omit<RawMessage & {type: "stream"}, "flags">
@@ -107,11 +113,8 @@ export type MessageCleanReaction = {
 
 export type Message = (
     | Omit<MessageWithBooleans & {type: "private"}, "reactions">
-    | Omit<MessageWithBooleans & {type: "stream"}, "reactions">
+    | Omit<MessageWithBooleans & {type: "stream"}, "reactions" | "subject">
 ) & {
-    // Replaced by `clean_reactions` in `reactions.set_clean_reactions`.
-    reactions?: RawReaction[];
-    // Added in `reactions.set_clean_reactions`.
     clean_reactions: Map<string, MessageCleanReaction>;
 
     locally_echoed?: boolean;
@@ -121,12 +124,14 @@ export type Message = (
     sent_by_me: boolean;
     reply_to: string;
 
-    // These properties are used in `message_list_view.js`.
-    starred_status: string;
-    message_reactions: MessageCleanReaction[];
-    url: string;
+    // These properties are set and used in `message_list_view.js`.
+    // TODO: It would be nice if we could not store these on the message
+    // object and only reference them within `message_list_view`.
+    message_reactions?: MessageCleanReaction[];
+    url?: string;
 
-    // Used in `markdown.js`, `server_events.js`, and `set_message_booleans`
+    // Used in `markdown.js`, `server_events.js`, and
+    // `convert_raw_message_to_message_with_booleans`
     flags?: string[];
 
     small_avatar_url?: string; // Used in `message_avatar.hbs`
@@ -169,7 +174,7 @@ export function get(message_id: number): Message | undefined {
     return stored_messages.get(message_id);
 }
 
-export function get_pm_emails(message: Message): string {
+export function get_pm_emails(message: Message | MessageWithBooleans): string {
     const user_ids = people.pm_with_user_ids(message) ?? [];
     const emails = user_ids
         .map((user_id) => {
@@ -192,30 +197,46 @@ export function get_pm_full_names(user_ids: number[]): string {
     return names.join(", ");
 }
 
-export function set_message_booleans(message: Message): void {
+export function convert_raw_message_to_message_with_booleans(
+    message: RawMessage,
+): MessageWithBooleans {
     const flags = message.flags ?? [];
 
     function convert_flag(flag_name: string): boolean {
         return flags.includes(flag_name);
     }
 
-    message.unread = !convert_flag("read");
-    message.historical = convert_flag("historical");
-    message.starred = convert_flag("starred");
-    message.mentioned =
-        convert_flag("mentioned") ||
-        convert_flag("stream_wildcard_mentioned") ||
-        convert_flag("topic_wildcard_mentioned");
-    message.mentioned_me_directly = convert_flag("mentioned");
-    message.stream_wildcard_mentioned = convert_flag("stream_wildcard_mentioned");
-    message.topic_wildcard_mentioned = convert_flag("topic_wildcard_mentioned");
-    message.collapsed = convert_flag("collapsed");
-    message.alerted = convert_flag("has_alert_word");
+    const converted_flags = {
+        unread: !convert_flag("read"),
+        historical: convert_flag("historical"),
+        starred: convert_flag("starred"),
+        mentioned:
+            convert_flag("mentioned") ||
+            convert_flag("stream_wildcard_mentioned") ||
+            convert_flag("topic_wildcard_mentioned"),
+        mentioned_me_directly: convert_flag("mentioned"),
+        stream_wildcard_mentioned: convert_flag("stream_wildcard_mentioned"),
+        topic_wildcard_mentioned: convert_flag("topic_wildcard_mentioned"),
+        collapsed: convert_flag("collapsed"),
+        alerted: convert_flag("has_alert_word"),
+    };
 
     // Once we have set boolean flags here, the `flags` attribute is
     // just a distraction, so we delete it.  (All the downstream code
     // uses booleans.)
-    delete message.flags;
+
+    // We have to return these separately because of how the `MessageWithBooleans`
+    // type is set up.
+    if (message.type === "private") {
+        return {
+            ..._.omit(message, "flags"),
+            ...converted_flags,
+        };
+    }
+    return {
+        ..._.omit(message, "flags"),
+        ...converted_flags,
+    };
 }
 
 export function update_booleans(message: Message, flags: string[]): void {
@@ -274,6 +295,8 @@ export function update_status_emoji_info(
 export function reify_message_id({old_id, new_id}: {old_id: number; new_id: number}): void {
     const message = stored_messages.get(old_id);
     if (message !== undefined) {
+        message.id = new_id;
+        message.locally_echoed = false;
         stored_messages.set(new_id, message);
         stored_messages.delete(old_id);
     }

@@ -183,8 +183,10 @@ function set_up_create_field_form(): void {
             $field_url_pattern_elem.show();
         } else {
             $field_url_pattern_elem.hide();
-            const profile_field_name =
-                realm.realm_default_external_accounts[profile_field_external_account_type].name;
+            const external_account =
+                realm.realm_default_external_accounts[profile_field_external_account_type];
+            assert(external_account !== undefined);
+            const profile_field_name = external_account.name;
             $("#profile_field_name").val(profile_field_name).prop("disabled", true);
             $("#profile_field_hint").val("").prop("disabled", true);
         }
@@ -377,11 +379,8 @@ function disable_submit_btn_if_no_property_changed(
     $profile_field_form: JQuery,
     field: CustomProfileField,
 ): void {
-    const data = settings_components.populate_data_for_request(
+    const data = settings_components.populate_data_for_custom_profile_field_request(
         $profile_field_form,
-        false,
-        undefined,
-        undefined,
         field,
     );
     let save_changes_button_disabled = false;
@@ -419,7 +418,7 @@ function set_up_select_field_edit_form(
 
     // Add blank choice at last
     create_choice_row($choice_list);
-    SortableJS.create($choice_list[0], {
+    SortableJS.create($choice_list[0]!, {
         onUpdate() {
             // Do nothing on drag. We process the order on submission
         },
@@ -466,7 +465,7 @@ function open_edit_form_modal(this: HTMLElement): void {
         const $profile_field_form = $("#edit-custom-profile-field-form-" + field_id);
 
         // If it exceeds or equals the max limit, we are disabling option for display custom
-        // profile field on user card and adding tooptip, unless the field is already checked.
+        // profile field on user card and adding tooltip, unless the field is already checked.
         if (display_in_profile_summary_fields_limit_reached && !field.display_in_profile_summary) {
             $profile_field_form
                 .find("input[name=display_in_profile_summary]")
@@ -518,11 +517,8 @@ function open_edit_form_modal(this: HTMLElement): void {
     function submit_form(): void {
         const $profile_field_form = $("#edit-custom-profile-field-form-" + field_id);
 
-        const data = settings_components.populate_data_for_request(
+        const data = settings_components.populate_data_for_custom_profile_field_request(
             $profile_field_form,
-            false,
-            undefined,
-            undefined,
             field,
         );
 
@@ -704,7 +700,7 @@ export function do_populate_profile_fields(profile_fields_data: CustomProfileFie
     display_in_profile_summary_fields_limit_reached = display_in_profile_summary_fields_count >= 2;
 
     if (current_user.is_admin) {
-        const field_list = $("#admin_profile_fields_table")[0];
+        const field_list = $("#admin_profile_fields_table")[0]!;
         SortableJS.create(field_list, {
             onUpdate: update_field_order,
             filter: "input",
@@ -722,7 +718,7 @@ function set_up_select_field(): void {
     create_choice_row($("#profile_field_choices"));
 
     if (current_user.is_admin) {
-        const choice_list = $("#profile_field_choices")[0];
+        const choice_list = $("#profile_field_choices")[0]!;
         SortableJS.create(choice_list, {
             onUpdate() {
                 // Do nothing on drag. We process the order on submission
@@ -776,7 +772,9 @@ export function get_external_account_link(field: UserExternalAccountData): strin
         assert(field.field_data.url_pattern !== undefined);
         field_url_pattern = field.field_data.url_pattern;
     } else {
-        field_url_pattern = realm.realm_default_external_accounts[field_subtype].url_pattern;
+        const external_account = realm.realm_default_external_accounts[field_subtype];
+        assert(external_account !== undefined);
+        field_url_pattern = external_account.url_pattern;
     }
     return field_url_pattern.replace("%(username)s", () => field.value);
 }

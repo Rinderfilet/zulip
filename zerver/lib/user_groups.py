@@ -2,6 +2,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Collection, Dict, Iterable, Iterator, List, Mapping, Optional, TypedDict, Union
 
+from django.conf import settings
 from django.db import connection, transaction
 from django.db.models import F, Prefetch, QuerySet
 from django.utils.timezone import now as timezone_now
@@ -712,12 +713,20 @@ def get_server_supported_permission_settings() -> ServerSupportedPermissionSetti
 
 def parse_group_setting_value(
     setting_value: Union[int, AnonymousSettingGroupDict],
+    setting_name: str,
 ) -> Union[int, AnonymousSettingGroupDict]:
     if isinstance(setting_value, int):
         return setting_value
 
     if len(setting_value.direct_members) == 0 and len(setting_value.direct_subgroups) == 1:
         return setting_value.direct_subgroups[0]
+
+    if not settings.ALLOW_ANONYMOUS_GROUP_VALUED_SETTINGS:
+        raise JsonableError(
+            _("{setting_name} can only be set to a single named user group.").format(
+                setting_name=setting_name
+            )
+        )
 
     return setting_value
 
@@ -742,12 +751,10 @@ def are_both_group_setting_values_equal(
 
 
 def validate_group_setting_value_change(
-    current_value: UserGroup,
+    current_setting_api_value: Union[int, AnonymousSettingGroupDict],
     new_setting_value: Union[int, AnonymousSettingGroupDict],
     expected_current_setting_value: Optional[Union[int, AnonymousSettingGroupDict]],
 ) -> bool:
-    current_setting_api_value = get_group_setting_value_for_api(current_value)
-
     if expected_current_setting_value is not None and not are_both_group_setting_values_equal(
         expected_current_setting_value,
         current_setting_api_value,

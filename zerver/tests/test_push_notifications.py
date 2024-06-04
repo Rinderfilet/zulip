@@ -1968,7 +1968,7 @@ class AnalyticsBouncerTest(BouncerTestCase):
         self.assertEqual(remote_realm_count.remote_id, realm_count.id)
         self.assertEqual(remote_realm_count.remote_realm, None)
         self.assertEqual(remote_installation_count.remote_id, installation_count.id)
-        # InstallationCont/RemoteInstallationCount don't have realm/remote_realm foreign
+        # InstallationCount/RemoteInstallationCount don't have realm/remote_realm foreign
         # keys, because they're aggregated over all realms.
 
         self.assertEqual(remote_realm_audit_log.remote_id, realm_audit_log.id)
@@ -2098,7 +2098,7 @@ class AnalyticsBouncerTest(BouncerTestCase):
             "POST",
             "server/analytics",
             {
-                "realm_counts": '[{"id":1,"property":"invites_sent::day","subgroup":null,"end_time":574300800.0,"value":5,"realm":2}]',
+                "realm_counts": '[{"id":1,"property":"messages_sent:is_bot:hour","subgroup":"false","end_time":574300800.0,"value":5,"realm":2}]',
                 "installation_counts": "[]",
                 "version": '"2.0.6+git"',
             },
@@ -2659,7 +2659,7 @@ class AnalyticsBouncerTest(BouncerTestCase):
         )
 
         # Restore the deleted realm to verify that the bouncer correctly handles that
-        # by togglin off .realm_locally_deleted.
+        # by toggling off .realm_locally_deleted.
         restored_zephyr_realm = do_create_realm("zephyr", "Zephyr")
         restored_zephyr_realm.uuid = deleted_realm_uuid
         restored_zephyr_realm.save()
