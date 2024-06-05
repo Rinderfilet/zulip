@@ -37,13 +37,12 @@ from zerver.lib.user_groups import (
 from zerver.models import (
     GroupGroupMembership,
     NamedUserGroup,
-    Realm,
     UserGroup,
     UserGroupMembership,
     UserProfile,
 )
 from zerver.models.groups import SystemGroups
-from zerver.models.realms import get_realm
+from zerver.models.realms import CommonPolicyEnum, get_realm
 
 
 class UserGroupTestCase(ZulipTestCase):
@@ -106,10 +105,9 @@ class UserGroupTestCase(ZulipTestCase):
         self.assertEqual(user_groups[9]["can_mention_group"], everyone_group.id)
 
         othello = self.example_user("othello")
-        setting_group = UserGroup.objects.create(realm=realm)
-        setting_group.direct_members.set([othello])
-        setting_group.direct_subgroups.set([admins_system_group])
-
+        setting_group = self.create_or_update_anonymous_group_for_setting(
+            [othello], [admins_system_group]
+        )
         new_user_group = check_add_user_group(
             realm,
             "newgroup2",
@@ -540,6 +538,50 @@ class UserGroupAPITestCase(UserGroupTestCase):
         result = self.client_post("/json/user_groups/create", info=params)
         self.assert_json_error(result, "Invalid user group ID: 1111")
 
+        with self.settings(ALLOW_ANONYMOUS_GROUP_VALUED_SETTINGS=False):
+            params = {
+                "name": "frontend",
+                "members": orjson.dumps([hamlet.id]).decode(),
+                "description": "Frontend team",
+                "can_mention_group": orjson.dumps(
+                    {
+                        "direct_members": [othello.id],
+                        "direct_subgroups": [moderators_group.id],
+                    }
+                ).decode(),
+            }
+            result = self.client_post("/json/user_groups/create", info=params)
+            self.assert_json_error(
+                result, "can_mention_group can only be set to a single named user group."
+            )
+
+            params = {
+                "name": "frontend",
+                "members": orjson.dumps([hamlet.id]).decode(),
+                "description": "Frontend team",
+                "can_mention_group": orjson.dumps(
+                    {
+                        "direct_members": [],
+                        "direct_subgroups": [moderators_group.id],
+                    }
+                ).decode(),
+            }
+            result = self.client_post("/json/user_groups/create", info=params)
+            self.assert_json_success(result)
+            frontend_group = NamedUserGroup.objects.get(name="frontend", realm=hamlet.realm)
+            self.assertEqual(frontend_group.can_mention_group_id, moderators_group.id)
+
+            params = {
+                "name": "devops",
+                "members": orjson.dumps([hamlet.id]).decode(),
+                "description": "Devops team",
+                "can_mention_group": orjson.dumps(moderators_group.id).decode(),
+            }
+            result = self.client_post("/json/user_groups/create", info=params)
+            self.assert_json_success(result)
+            devops_group = NamedUserGroup.objects.get(name="devops", realm=hamlet.realm)
+            self.assertEqual(devops_group.can_mention_group_id, moderators_group.id)
+
     def test_user_group_get(self) -> None:
         # Test success
         user_profile = self.example_user("hamlet")
@@ -792,6 +834,50 @@ class UserGroupAPITestCase(UserGroupTestCase):
         }
         result = self.client_patch(f"/json/user_groups/{support_group.id}", info=params)
         self.assert_json_error(result, "Invalid user group ID: 1111")
+
+        # Test case when ALLOW_ANONYMOUS_GROUP_VALUED_SETTINGS is False.
+        with self.settings(ALLOW_ANONYMOUS_GROUP_VALUED_SETTINGS=False):
+            params = {
+                "can_mention_group": orjson.dumps(
+                    {
+                        "new": {
+                            "direct_members": [othello.id],
+                            "direct_subgroups": [moderators_group.id, marketing_group.id],
+                        }
+                    }
+                ).decode()
+            }
+            result = self.client_patch(f"/json/user_groups/{support_group.id}", info=params)
+            self.assert_json_error(
+                result, "can_mention_group can only be set to a single named user group."
+            )
+
+            params = {
+                "can_mention_group": orjson.dumps(
+                    {
+                        "new": {
+                            "direct_members": [],
+                            "direct_subgroups": [moderators_group.id],
+                        }
+                    }
+                ).decode()
+            }
+            result = self.client_patch(f"/json/user_groups/{support_group.id}", info=params)
+            self.assert_json_success(result)
+            support_group = NamedUserGroup.objects.get(name="support", realm=hamlet.realm)
+            self.assertEqual(support_group.can_mention_group_id, moderators_group.id)
+
+            params = {
+                "can_mention_group": orjson.dumps(
+                    {
+                        "new": marketing_group.id,
+                    }
+                ).decode()
+            }
+            result = self.client_patch(f"/json/user_groups/{support_group.id}", info=params)
+            self.assert_json_success(result)
+            support_group = NamedUserGroup.objects.get(name="support", realm=hamlet.realm)
+            self.assertEqual(support_group.can_mention_group_id, marketing_group.id)
 
     def test_user_group_update_to_already_existing_name(self) -> None:
         hamlet = self.example_user("hamlet")
@@ -1226,7 +1312,7 @@ class UserGroupAPITestCase(UserGroupTestCase):
         do_set_realm_property(
             realm,
             "user_group_edit_policy",
-            Realm.POLICY_ADMINS_ONLY,
+            CommonPolicyEnum.ADMINS_ONLY,
             acting_user=None,
         )
         check_create_user_group("shiva", "Insufficient permission")
@@ -1240,7 +1326,7 @@ class UserGroupAPITestCase(UserGroupTestCase):
         do_set_realm_property(
             realm,
             "user_group_edit_policy",
-            Realm.POLICY_MODERATORS_ONLY,
+            CommonPolicyEnum.MODERATORS_ONLY,
             acting_user=None,
         )
         check_create_user_group("cordelia", "Insufficient permission")
@@ -1254,7 +1340,7 @@ class UserGroupAPITestCase(UserGroupTestCase):
         do_set_realm_property(
             realm,
             "user_group_edit_policy",
-            Realm.POLICY_MEMBERS_ONLY,
+            CommonPolicyEnum.MEMBERS_ONLY,
             acting_user=None,
         )
         check_create_user_group("polonius", "Not allowed for guest users")
@@ -1269,7 +1355,7 @@ class UserGroupAPITestCase(UserGroupTestCase):
         do_set_realm_property(
             realm,
             "user_group_edit_policy",
-            Realm.POLICY_FULL_MEMBERS_ONLY,
+            CommonPolicyEnum.FULL_MEMBERS_ONLY,
             acting_user=None,
         )
         cordelia = self.example_user("cordelia")
@@ -1335,7 +1421,7 @@ class UserGroupAPITestCase(UserGroupTestCase):
         do_set_realm_property(
             realm,
             "user_group_edit_policy",
-            Realm.POLICY_ADMINS_ONLY,
+            CommonPolicyEnum.ADMINS_ONLY,
             acting_user=None,
         )
         check_update_user_group("help", "Troubleshooting team", "shiva", "Insufficient permission")
@@ -1346,7 +1432,7 @@ class UserGroupAPITestCase(UserGroupTestCase):
         do_set_realm_property(
             realm,
             "user_group_edit_policy",
-            Realm.POLICY_MODERATORS_ONLY,
+            CommonPolicyEnum.MODERATORS_ONLY,
             acting_user=None,
         )
         check_update_user_group("support", "Support team", "othello", "Insufficient permission")
@@ -1357,7 +1443,7 @@ class UserGroupAPITestCase(UserGroupTestCase):
         do_set_realm_property(
             realm,
             "user_group_edit_policy",
-            Realm.POLICY_MEMBERS_ONLY,
+            CommonPolicyEnum.MEMBERS_ONLY,
             acting_user=None,
         )
         check_update_user_group(
@@ -1374,7 +1460,7 @@ class UserGroupAPITestCase(UserGroupTestCase):
         # Check only full members are allowed to update the user group and only if belong to the
         # user group.
         do_set_realm_property(
-            realm, "user_group_edit_policy", Realm.POLICY_FULL_MEMBERS_ONLY, acting_user=None
+            realm, "user_group_edit_policy", CommonPolicyEnum.FULL_MEMBERS_ONLY, acting_user=None
         )
         do_set_realm_property(realm, "waiting_period_threshold", 10, acting_user=None)
         othello = self.example_user("othello")
@@ -1434,7 +1520,7 @@ class UserGroupAPITestCase(UserGroupTestCase):
         do_set_realm_property(
             realm,
             "user_group_edit_policy",
-            Realm.POLICY_ADMINS_ONLY,
+            CommonPolicyEnum.ADMINS_ONLY,
             acting_user=None,
         )
         check_adding_members_to_group("shiva", "Insufficient permission")
@@ -1448,7 +1534,7 @@ class UserGroupAPITestCase(UserGroupTestCase):
         do_set_realm_property(
             realm,
             "user_group_edit_policy",
-            Realm.POLICY_MODERATORS_ONLY,
+            CommonPolicyEnum.MODERATORS_ONLY,
             acting_user=None,
         )
         check_adding_members_to_group("cordelia", "Insufficient permission")
@@ -1462,7 +1548,7 @@ class UserGroupAPITestCase(UserGroupTestCase):
         do_set_realm_property(
             realm,
             "user_group_edit_policy",
-            Realm.POLICY_MEMBERS_ONLY,
+            CommonPolicyEnum.MEMBERS_ONLY,
             acting_user=None,
         )
         check_adding_members_to_group("polonius", "Not allowed for guest users")
@@ -1478,7 +1564,7 @@ class UserGroupAPITestCase(UserGroupTestCase):
         do_set_realm_property(
             realm,
             "user_group_edit_policy",
-            Realm.POLICY_FULL_MEMBERS_ONLY,
+            CommonPolicyEnum.FULL_MEMBERS_ONLY,
             acting_user=None,
         )
         do_set_realm_property(realm, "waiting_period_threshold", 10, acting_user=None)

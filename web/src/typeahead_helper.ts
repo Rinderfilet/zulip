@@ -58,9 +58,8 @@ export function highlight_with_escaping_and_regex(regex: RegExp, item: string): 
     const pieces = item.split(regex).filter(Boolean);
     let result = "";
 
-    for (let i = 0; i < pieces.length; i += 1) {
-        const piece = pieces[i];
-        if (regex.test(piece) && (i === 0 || pieces[i - 1].endsWith(" "))) {
+    for (const [i, piece] of pieces.entries()) {
+        if (regex.test(piece) && (i === 0 || pieces[i - 1]!.endsWith(" "))) {
             // only highlight if the matching part is a word prefix, ie
             // if it is the 1st piece or if there was a space before it
             result += "<strong>" + Handlebars.Utils.escapeExpression(piece) + "</strong>";
@@ -311,11 +310,9 @@ export function sort_people_for_relevance<UserType extends UserOrMentionPillData
     current_topic?: string,
 ): UserType[] {
     // If sorting for recipientbox typeahead and not viewing a stream / topic, then current_stream = ""
-    let current_stream = null;
-    if (current_stream_id) {
-        current_stream = stream_data.get_sub_by_id(current_stream_id);
-    }
-    if (!current_stream) {
+    const current_stream =
+        current_stream_id !== undefined ? stream_data.get_sub_by_id(current_stream_id) : undefined;
+    if (current_stream === undefined) {
         objs.sort((person_a, person_b) => compare_people_for_relevance(person_a, person_b));
     } else {
         assert(current_stream_id !== undefined);

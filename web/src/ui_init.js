@@ -222,6 +222,7 @@ export function initialize_kitchen_sink_stuff() {
     message_viewport.$scroll_container.on("wheel", (e) => {
         const delta = e.originalEvent.deltaY;
         if (
+            !popovers.any_active() &&
             !overlays.any_active() &&
             !modals.any_active() &&
             narrow_state.is_message_feed_visible()
@@ -509,6 +510,8 @@ export function initialize_everything(state_data) {
     );
     const local_message_params = pop_fields("max_message_id");
 
+    const onboarding_steps_params = pop_fields("onboarding_steps");
+
     const current_user_params = pop_fields(
         "avatar_source",
         "avatar_url",
@@ -528,7 +531,6 @@ export function initialize_everything(state_data) {
         "is_guest",
         "is_moderator",
         "is_owner",
-        "onboarding_steps",
         "user_id",
     );
 
@@ -618,7 +620,7 @@ export function initialize_everything(state_data) {
         "realm_send_welcome_emails",
         "realm_signup_announcements_stream_id",
         "realm_upload_quota_mib",
-        "realm_uri",
+        "realm_url",
         "realm_user_group_edit_policy",
         "realm_video_chat_provider",
         "realm_waiting_period_threshold",
@@ -733,17 +735,14 @@ export function initialize_everything(state_data) {
         },
         on_mark_pm_as_read: unread_ops.mark_pm_as_read,
         on_mark_topic_as_read: unread_ops.mark_topic_as_read,
-        maybe_load_older_messages() {
+        maybe_load_older_messages(first_unread_message_id) {
             recent_view_ui.set_backfill_in_progress(true);
             message_fetch.maybe_load_older_messages({
                 msg_list_data: all_messages_data,
                 recent_view: true,
                 // To have a hard anchor on our target of first unread message id,
                 // we pass it from here, otherwise it might get updated and lead to confusion.
-                //
-                // TODO: Ideally, muted unread messages would not
-                // count for this purpose.
-                first_unread_message_id: unread.get_all_msg_ids()[0],
+                first_unread_message_id,
             });
         },
     });
@@ -882,7 +881,7 @@ export function initialize_everything(state_data) {
     });
     drafts.initialize_ui();
     drafts_overlay_ui.initialize();
-    onboarding_steps.initialize();
+    onboarding_steps.initialize(onboarding_steps_params);
     typing.initialize();
     starred_messages_ui.initialize();
     user_status_ui.initialize();

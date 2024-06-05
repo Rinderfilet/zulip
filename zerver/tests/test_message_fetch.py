@@ -474,6 +474,9 @@ class NarrowBuilderTest(ZulipTestCase):
         term = dict(operator="id", operand="notanint")
         self.assertRaises(BadNarrowOperatorError, self._build_query, term)
 
+        term = dict(operator="id", operand=str(Message.MAX_POSSIBLE_MESSAGE_ID + 1))
+        self.assertRaises(BadNarrowOperatorError, self._build_query, term)
+
     def test_add_term_using_id_operator_and_negated(self) -> None:  # NEGATED
         term = dict(operator="id", operand=555, negated=True)
         self._do_add_term_test(term, "WHERE id != %(param_1)s")
@@ -1103,7 +1106,7 @@ class IncludeHistoryTest(ZulipTestCase):
             dict(operator="channels", operand="public"),
             dict(operator="is", operand="resolved"),
         ]
-        self.assertFalse(ok_to_include_history(narrow, user_profile, False))
+        self.assertTrue(ok_to_include_history(narrow, user_profile, False))
 
         # simple True case
         narrow = [
@@ -2202,20 +2205,20 @@ class GetOldMessagesTest(ZulipTestCase):
             for message in result["messages"]:
                 self.assertEqual(dr_emails(message["display_recipient"]), emails)
 
-    def test_get_messages_with_nonexistant_group_dm(self) -> None:
+    def test_get_messages_with_nonexistent_group_dm(self) -> None:
         me = self.example_user("hamlet")
         # Huddle which doesn't match anything gets no results
-        non_existant_huddle = [
+        non_existent_huddle = [
             me.id,
             self.example_user("iago").id,
             self.example_user("othello").id,
         ]
         self.login_user(me)
-        narrow: List[Dict[str, Any]] = [dict(operator="dm", operand=non_existant_huddle)]
+        narrow: List[Dict[str, Any]] = [dict(operator="dm", operand=non_existent_huddle)]
         result = self.get_and_check_messages(dict(narrow=orjson.dumps(narrow).decode()))
         self.assertEqual(result["messages"], [])
 
-        narrow = [dict(operator="dm", operand=non_existant_huddle, negated=True)]
+        narrow = [dict(operator="dm", operand=non_existent_huddle, negated=True)]
         result = self.get_and_check_messages(dict(narrow=orjson.dumps(narrow).decode()))
         self.assertEqual([m["id"] for m in result["messages"]], [1, 3])
 

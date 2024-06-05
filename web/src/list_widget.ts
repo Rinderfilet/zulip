@@ -81,7 +81,7 @@ export type ListWidget<Key, Item = Key> = BaseListWidget & {
         get_insert_index: (list: Item[], item: Item) => number,
     ) => void;
     sort: (sorting_function: string, prop?: string) => void;
-    replace_list_data: (list: Key[]) => void;
+    replace_list_data: (list: Key[], should_redraw?: boolean) => void;
 };
 
 const DEFAULTS = {
@@ -518,10 +518,10 @@ export function create<Key, Item = Key>(
                 }
                 const rendered_row = opts.modifier_html(item, meta.filter_value);
                 if (insert_index === meta.filtered_list.length - 1) {
-                    const $target_row = opts.html_selector!(meta.filtered_list[insert_index - 1]);
+                    const $target_row = opts.html_selector!(meta.filtered_list[insert_index - 1]!);
                     $target_row.after($(rendered_row));
                 } else {
-                    const $target_row = opts.html_selector!(meta.filtered_list[insert_index + 1]);
+                    const $target_row = opts.html_selector!(meta.filtered_list[insert_index + 1]!);
                     $target_row.before($(rendered_row));
                 }
                 widget.increase_rendered_offset();
@@ -534,14 +534,16 @@ export function create<Key, Item = Key>(
             widget.hard_redraw();
         },
 
-        replace_list_data(list) {
+        replace_list_data(list, should_redraw = true) {
             /*
                 We mostly use this widget for lists where you are
                 not adding or removing rows, so when you do modify
                 the list, we have a brute force solution.
             */
             meta.list = list;
-            widget.hard_redraw();
+            if (should_redraw) {
+                widget.hard_redraw();
+            }
         },
     };
 

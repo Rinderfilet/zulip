@@ -86,7 +86,7 @@ function zephyr_topic_name_match(message: Message & {type: "stream"}, operand: s
     const m = /^(.*?)(?:\.d)*$/i.exec(operand);
     // m should never be null because any string matches that regex.
     assert(m !== null);
-    const base_topic = m[1];
+    const base_topic = m[1]!;
     let related_regexp;
 
     // Additionally, Zephyr users expect the empty instance and
@@ -123,9 +123,15 @@ function message_in_home(message: Message): boolean {
         return true;
     }
 
+    if (user_topics.is_topic_muted(message.stream_id, message.topic)) {
+        // If topic is muted, we don't show the message.
+        return false;
+    }
+
     return (
+        // If stream is muted, we show the message if topic is unmuted or followed.
         !stream_data.is_muted(message.stream_id) ||
-        user_topics.is_topic_unmuted(message.stream_id, message.topic)
+        user_topics.is_topic_unmuted_or_followed(message.stream_id, message.topic)
     );
 }
 
@@ -226,15 +232,15 @@ function message_matches_search_term(message: Message, operator: string, operand
         }
 
         case "dm-including": {
-            const operand_ids = people.pm_with_operand_ids(operand);
-            if (!operand_ids) {
+            const operand_user = people.get_by_email(operand);
+            if (operand_user === undefined) {
                 return false;
             }
             const user_ids = people.all_user_ids_in_pm(message);
             if (!user_ids) {
                 return false;
             }
-            return user_ids.includes(operand_ids[0]);
+            return user_ids.includes(operand_user.user_id);
         }
     }
 
@@ -251,7 +257,7 @@ export class Filter {
     constructor(terms: NarrowTerm[]) {
         this._terms = this.fix_terms(terms);
         if (this.has_operator("channel")) {
-            this._sub = stream_data.get_sub_by_name(this.operands("channel")[0]);
+            this._sub = stream_data.get_sub_by_name(this.operands("channel")[0]!);
         }
     }
 
@@ -575,7 +581,7 @@ export class Filter {
             return parts;
         }
 
-        if (terms.length >= 2) {
+        if (terms[0] !== undefined && terms[1] !== undefined) {
             const is = (term: NarrowTerm, expected: string): boolean =>
                 Filter.canonicalize_operator(term.operator) === expected && !term.negated;
 
@@ -718,7 +724,7 @@ export class Filter {
     }
 
     is_non_huddle_pm(): boolean {
-        return this.has_operator("dm") && this.operands("dm")[0].split(",").length === 1;
+        return this.has_operator("dm") && this.operands("dm")[0]!.split(",").length === 1;
     }
 
     supports_collapsing_recipients(): boolean {
@@ -866,7 +872,7 @@ export class Filter {
                 "/#narrow/" +
                 CHANNEL_SYNONYM +
                 "/" +
-                stream_data.name_to_slug(this.operands("channel")[0]) +
+                stream_data.name_to_slug(this.operands("channel")[0]!) +
                 "/topic/" +
                 this.operands("topic")[0]
             );
@@ -888,7 +894,7 @@ export class Filter {
                         "/#narrow/" +
                         CHANNEL_SYNONYM +
                         "/" +
-                        stream_data.name_to_slug(this.operands("channel")[0])
+                        stream_data.name_to_slug(this.operands("channel")[0]!)
                     );
                 case "is-dm":
                     return "/#narrow/is/dm";
@@ -905,7 +911,7 @@ export class Filter {
                 // TODO: It is ambiguous how we want to handle the 'sender' case,
                 // we may remove it in the future based on design decisions
                 case "sender":
-                    return "/#narrow/sender/" + people.emails_to_slug(this.operands("sender")[0]);
+                    return "/#narrow/sender/" + people.emails_to_slug(this.operands("sender")[0]!);
             }
         }
 
@@ -985,7 +991,7 @@ export class Filter {
             (term_types.length === 2 && _.isEqual(term_types, ["dm", "near"])) ||
             (term_types.length === 1 && _.isEqual(term_types, ["dm"]))
         ) {
-            const emails = this.operands("dm")[0].split(",");
+            const emails = this.operands("dm")[0]!.split(",");
             const names = emails.map((email) => {
                 const person = people.get_by_email(email);
                 if (!person) {
@@ -1000,7 +1006,7 @@ export class Filter {
             return util.format_array_as_list(names, "long", "conjunction");
         }
         if (term_types.length === 1 && _.isEqual(term_types, ["sender"])) {
-            const email = this.operands("sender")[0];
+            const email = this.operands("sender")[0]!;
             const user = people.get_by_email(email);
             let sender = email;
             if (user) {
@@ -1145,6 +1151,7 @@ export class Filter {
 
     filter_with_new_params(params: NarrowTerm): Filter {
         const new_params = this.fix_terms([params])[0];
+        assert(new_params !== undefined);
         const terms = this._terms.map((term) => {
             const new_term = {...term};
             if (new_term.operator === new_params.operator && !new_term.negated) {

@@ -1,4 +1,5 @@
 import $ from "jquery";
+import type * as tippy from "tippy.js";
 
 import render_add_default_streams from "../templates/settings/add_default_streams.hbs";
 import render_admin_default_streams_list from "../templates/settings/admin_default_streams_list.hbs";
@@ -18,31 +19,34 @@ import * as stream_data from "./stream_data";
 import * as sub_store from "./sub_store";
 import * as ui_report from "./ui_report";
 
-function add_choice_row($widget) {
+function add_choice_row($widget: JQuery): void {
     if ($widget.closest(".choice-row").next().hasClass("choice-row")) {
         return;
     }
     create_choice_row();
 }
 
-function get_chosen_default_streams() {
+function get_chosen_default_streams(): Set<number> {
     // Return the set of stream id's of streams chosen in the default stream modal.
     return new Set(
-        $("#default-stream-choices .choice-row .dropdown_widget_value")
-            .map((_i, elem) => Number($(elem).attr("data-stream-id")).toString())
+        // Note: We selectively map through the dropdown elements that contain the
+        // `data-stream-id` attribute to avoid adding an element with undefined value
+        //  into the returned `Set`.
+        $("#default-stream-choices .choice-row .dropdown_widget_value[data-stream-id]")
+            .map((_i, elem) => Number($(elem).attr("data-stream-id")))
             .get(),
     );
 }
 
-function create_choice_row() {
+function create_choice_row(): void {
     const $container = $("#default-stream-choices");
-    const value = settings_profile_fields.get_value_for_new_option("#default-stream-choices");
+    const value = settings_profile_fields.get_value_for_new_option($container);
     const stream_dropdown_widget_name = `select_default_stream_${value}`;
     const row_html = render_default_stream_choice({value, stream_dropdown_widget_name});
     $container.append($(row_html));
 
     // List of non-default streams that are not yet selected.
-    function get_options() {
+    function get_options(): {name: string; unique_id: number}[] {
         const chosen_default_streams = get_chosen_default_streams();
 
         return stream_data
@@ -50,10 +54,10 @@ function create_choice_row() {
             .filter((e) => !chosen_default_streams.has(e.unique_id));
     }
 
-    function item_click_callback(event, dropdown) {
+    function item_click_callback(event: JQuery.ClickEvent, dropdown: tippy.Instance): void {
         const $selected_stream = $(event.currentTarget);
-        const selected_stream_name = $selected_stream.attr("data-name");
-        const selected_stream_id = Number.parseInt($selected_stream.data("unique-id"), 10);
+        const selected_stream_name = $selected_stream.attr("data-name")!;
+        const selected_stream_id = Number.parseInt($selected_stream.attr("data-unique-id")!, 10);
 
         const $stream_dropdown_widget = $(`#${CSS.escape(stream_dropdown_widget_name)}_widget`);
         const $stream_name = $stream_dropdown_widget.find(".dropdown_widget_value");
@@ -82,11 +86,11 @@ const meta = {
     loaded: false,
 };
 
-export function reset() {
+export function reset(): void {
     meta.loaded = false;
 }
 
-export function maybe_disable_widgets() {
+export function maybe_disable_widgets(): void {
     if (current_user.is_admin) {
         return;
     }
@@ -96,11 +100,11 @@ export function maybe_disable_widgets() {
         .prop("disabled", true);
 }
 
-export function build_default_stream_table() {
+export function build_default_stream_table(): void {
     const $table = $("#admin_default_streams_table").expectOne();
 
     const stream_ids = stream_data.get_default_stream_ids();
-    const subs = stream_ids.map((stream_id) => sub_store.get(stream_id));
+    const subs = stream_ids.map((stream_id) => sub_store.get(stream_id)!);
 
     ListWidget.create($table, subs, {
         name: "default_streams_list",
@@ -112,7 +116,7 @@ export function build_default_stream_table() {
             });
         },
         filter: {
-            $element: $table.closest(".settings-section").find(".search"),
+            $element: $table.closest(".settings-section").find<HTMLInputElement>("input.search"),
             predicate(item, query) {
                 return item.name.toLowerCase().includes(query.toLowerCase());
             },
@@ -131,15 +135,19 @@ export function build_default_stream_table() {
     loading.destroy_indicator($("#admin_page_default_streams_loading_indicator"));
 }
 
-export function update_default_streams_table() {
+export function update_default_streams_table(): void {
     if (["organization", "settings"].includes(hash_parser.get_current_hash_category())) {
         $("#admin_default_streams_table").expectOne().find("tr.default_stream_row").remove();
         build_default_stream_table();
     }
 }
 
-export function delete_default_stream(stream_id, $default_stream_row, $alert_element) {
-    channel.del({
+export function delete_default_stream(
+    stream_id: number,
+    $default_stream_row: JQuery,
+    $alert_element: JQuery,
+): void {
+    void channel.del({
         url: "/json/default_streams?" + $.param({stream_id}),
         error(xhr) {
             ui_report.generic_row_button_error(xhr, $alert_element);
@@ -150,7 +158,7 @@ export function delete_default_stream(stream_id, $default_stream_row, $alert_ele
     });
 }
 
-function delete_choice_row(e) {
+function delete_choice_row(e: JQuery.ClickEvent): void {
     const $row = $(e.currentTarget).parent();
     $row.remove();
 
@@ -161,10 +169,10 @@ function delete_choice_row(e) {
     );
 }
 
-function show_add_default_streams_modal() {
+function show_add_default_streams_modal(): void {
     const html_body = render_add_default_streams();
 
-    function add_default_streams(e) {
+    function add_default_streams(e: JQuery.ClickEvent): void {
         e.preventDefault();
         e.stopPropagation();
 
@@ -173,9 +181,9 @@ function show_add_default_streams_modal() {
         let successful_requests = 0;
         const chosen_streams = get_chosen_default_streams();
 
-        function make_default_stream_request(stream_id) {
+        function make_default_stream_request(stream_id: number): void {
             const data = {stream_id};
-            channel.post({
+            void channel.post({
                 url: "/json/default_streams",
                 data,
                 success() {
@@ -201,7 +209,7 @@ function show_add_default_streams_modal() {
         }
     }
 
-    function default_stream_post_render() {
+    function default_stream_post_render(): void {
         $("#add-default-stream-modal .dialog_submit_button").prop("disabled", true);
 
         create_choice_row();
@@ -220,12 +228,12 @@ function show_add_default_streams_modal() {
     });
 }
 
-export function set_up() {
+export function set_up(): void {
     build_page();
     maybe_disable_widgets();
 }
 
-export function build_page() {
+export function build_page(): void {
     meta.loaded = true;
 
     update_default_streams_table();
@@ -237,9 +245,13 @@ export function build_page() {
         show_add_default_streams_modal();
     });
 
-    $("body").on("click", ".default_stream_row .remove-default-stream", function (e) {
-        const $row = $(this).closest(".default_stream_row");
-        const stream_id = Number.parseInt($row.attr("data-stream-id"), 10);
-        delete_default_stream(stream_id, $row, $(e.target));
-    });
+    $("body").on(
+        "click",
+        ".default_stream_row .remove-default-stream",
+        function (this: HTMLElement) {
+            const $row = $(this).closest(".default_stream_row");
+            const stream_id = Number.parseInt($row.attr("data-stream-id")!, 10);
+            delete_default_stream(stream_id, $row, $(this));
+        },
+    );
 }

@@ -86,12 +86,133 @@ export function changehash(newhash, trigger) {
     browser_history.set_hash(newhash);
 }
 
-export function save_narrow(terms, trigger) {
+export function update_hash_to_match_filter(filter, trigger) {
     if (browser_history.state.changing_hash && trigger !== "retarget message location") {
         return;
     }
-    const new_hash = hash_util.search_terms_to_hash(terms);
+    const new_hash = hash_util.search_terms_to_hash(filter.terms());
     changehash(new_hash, trigger);
+
+    if (stream_list.is_zoomed_in()) {
+        browser_history.update_current_history_state_data({show_more_topics: true});
+    }
+}
+
+function create_and_update_message_list(filter, id_info, opts) {
+    const excludes_muted_topics = filter.excludes_muted_topics();
+
+    // Check if we already have a rendered message list for the `filter`.
+    // TODO: If we add a message list other than `is_in_home` to be save as rendered,
+    // we need to add a `is_equal` function to `Filter` to compare the filters.
+    let msg_list;
+    let restore_rendered_list = false;
+    const is_combined_feed_global_view = filter.is_in_home();
+    for (const list of message_lists.all_rendered_message_lists()) {
+        if (is_combined_feed_global_view && list.data.filter.is_in_home()) {
+            if (opts.then_select_id > 0 && !list.msg_id_in_fetched_range(opts.then_select_id)) {
+                // We don't have the target message in the current rendered list.
+                // Read MessageList.should_preserve_current_rendered_state for details.
+                break;
+            }
+
+            msg_list = list;
+            restore_rendered_list = true;
+            break;
+        }
+    }
+
+    if (!restore_rendered_list) {
+        let msg_data = new MessageListData({
+            filter,
+            excludes_muted_topics,
+        });
+
+        // Populate the message list if we can apply our filter locally (i.e.
+        // with no backend help) and we have the message we want to select.
+        // Also update id_info accordingly.
+        maybe_add_local_messages({
+            id_info,
+            msg_data,
+        });
+
+        if (!id_info.local_select_id) {
+            // If we're not actually ready to select an ID, we need to
+            // trash the `MessageListData` object that we just constructed
+            // and pass an empty one to MessageList, because the block of
+            // messages in the MessageListData built inside
+            // maybe_add_local_messages is likely not be contiguous with
+            // the block we're about to request from the server instead.
+            msg_data = new MessageListData({
+                filter,
+                excludes_muted_topics,
+            });
+        }
+
+        msg_list = new message_list.MessageList({
+            data: msg_data,
+        });
+    }
+    assert(msg_list !== undefined);
+
+    // Put the narrow terms in the URL fragment/hash.
+    //
+    // opts.change_hash will be false when the URL fragment was
+    // the source of this narrow, and the fragment was not a link to
+    // a specific target message ID that has been moved.
+    //
+    // This needs to be called at the same time as updating the
+    // current message list so that we don't need to think about
+    // bugs related to the URL fragment/hash being desynced from
+    // message_lists.current.
+    //
+    // It's fine for the hash change to happen anytime before updating
+    // the current message list as we are trying to emulate the `hashchange`
+    // workflow we have which calls `narrow.activate` after hash is updated.
+    if (opts.change_hash) {
+        update_hash_to_match_filter(filter, opts.trigger);
+        opts.show_more_topics = history.state?.show_more_topics ?? false;
+    }
+
+    // Show the new set of messages. It is important to set message_lists.current to
+    // the view right as it's being shown, because we rely on message_lists.current
+    // being shown for deciding when to condense messages.
+    // From here on down, any calls to the narrow_state API will
+    // reflect the requested narrow.
+    message_lists.update_current_message_list(msg_list);
+    return {msg_list, restore_rendered_list};
+}
+
+function handle_post_message_list_change(
+    id_info,
+    msg_list,
+    opts,
+    select_immediately,
+    select_opts,
+    then_select_offset,
+) {
+    // Important: We need to consider opening the compose box
+    // before calling render_message_list_with_selected_message, so that the logic in
+    // recenter_view for positioning the currently selected
+    // message can take into account the space consumed by the
+    // open compose box.
+    compose_actions.on_narrow(opts);
+
+    if (select_immediately) {
+        render_message_list_with_selected_message({
+            id_info,
+            select_offset: then_select_offset,
+            msg_list: message_lists.current,
+            select_opts,
+        });
+    }
+
+    handle_post_view_change(msg_list, opts);
+
+    unread_ui.update_unread_banner();
+
+    // It is important to call this after other important updates
+    // like narrow filter and compose recipients happen.
+    compose_recipient.handle_middle_pane_transition();
 }
 
 export function activate(raw_terms, opts) {
@@ -151,9 +272,6 @@ export function activate(raw_terms, opts) {
         return;
     }
 
-    // Use to determine if user read any unread messages outside the combined feed.
-    const was_narrowed_already = message_lists.current?.narrowed;
-
     // Since narrow.activate is called directly from various
     // places in our code without passing through hashchange,
     // we need to check if the narrow is allowed for spectator here too.
@@ -180,6 +298,7 @@ export function activate(raw_terms, opts) {
         then_select_offset: undefined,
         change_hash: true,
         trigger: "unknown",
+        show_more_topics: false,
         ...opts,
     };
 
@@ -187,7 +306,7 @@ export function activate(raw_terms, opts) {
     const span_data = {
         op: "function",
         description: "narrow",
-        data: {was_narrowed_already, raw_terms, trigger: opts.trigger},
+        data: {raw_terms, trigger: opts.trigger},
     };
     let span;
     if (!existing_span) {
@@ -417,75 +536,11 @@ export function activate(raw_terms, opts) {
             }
         }
 
-        const excludes_muted_topics = filter.excludes_muted_topics();
-
-        // Check if we already have a rendered message list for the `filter`.
-        // TODO: If we add a message list other than `is_in_home` to be save as rendered,
-        // we need to add a `is_equal` function to `Filter` to compare the filters.
-        let msg_list;
-        let restore_rendered_list = false;
-        for (const list of message_lists.all_rendered_message_lists()) {
-            if (is_combined_feed_global_view && list.preserve_rendered_state) {
-                assert(list.data.filter.is_in_home());
-                msg_list = list;
-                restore_rendered_list = true;
-                break;
-            }
-        }
-
-        if (!restore_rendered_list) {
-            let msg_data = new MessageListData({
-                filter,
-                excludes_muted_topics,
-            });
-
-            // Populate the message list if we can apply our filter locally (i.e.
-            // with no backend help) and we have the message we want to select.
-            // Also update id_info accordingly.
-            maybe_add_local_messages({
-                id_info,
-                msg_data,
-            });
-
-            if (!id_info.local_select_id) {
-                // If we're not actually ready to select an ID, we need to
-                // trash the `MessageListData` object that we just constructed
-                // and pass an empty one to MessageList, because the block of
-                // messages in the MessageListData built inside
-                // maybe_add_local_messages is likely not be contiguous with
-                // the block we're about to request from the server instead.
-                msg_data = new MessageListData({
-                    filter,
-                    excludes_muted_topics,
-                });
-            }
-
-            msg_list = new message_list.MessageList({
-                data: msg_data,
-            });
-        }
-        assert(msg_list !== undefined);
-
-        // Put the narrow terms in the URL fragment/hash.
-        //
-        // opts.change_hash will be false when the URL fragment was
-        // the source of this narrow, and the fragment was not a link to
-        // a specific target message ID that has been moved.
-        //
-        // This needs to be called at the same time as updating the
-        // current message list so that we don't need to think about
-        // bugs related to the URL fragment/hash being desynced from
-        // mesasge_lists.current.
-        if (opts.change_hash) {
-            save_narrow(terms, opts.trigger);
-        }
-
-        // Show the new set of messages. It is important to set message_lists.current to
-        // the view right as it's being shown, because we rely on message_lists.current
-        // being shown for deciding when to condense messages.
-        // From here on down, any calls to the narrow_state API will
-        // reflect the requested narrow.
-        message_lists.update_current_message_list(msg_list);
+        const {msg_list, restore_rendered_list} = create_and_update_message_list(
+            filter,
+            id_info,
+            opts,
+        );
 
         let select_immediately;
         let select_opts;
@@ -571,29 +626,14 @@ export function activate(raw_terms, opts) {
         assert(select_opts !== undefined);
         assert(select_immediately !== undefined);
 
-        // Important: We need to consider opening the compose box
-        // before calling render_message_list_with_selected_message, so that the logic in
-        // recenter_view for positioning the currently selected
-        // message can take into account the space consumed by the
-        // open compose box.
-        compose_actions.on_narrow(opts);
-
-        if (select_immediately) {
-            render_message_list_with_selected_message({
-                id_info,
-                select_offset: then_select_offset,
-                msg_list: message_lists.current,
-                select_opts,
-            });
-        }
-
-        handle_post_view_change(msg_list);
-
-        unread_ui.update_unread_banner();
-
-        // It is important to call this after other important updates
-        // like narrow filter and compose recipients happen.
-        compose_recipient.handle_middle_pane_transition();
+        handle_post_message_list_change(
+            id_info,
+            msg_list,
+            opts,
+            select_immediately,
+            select_opts,
+            then_select_offset,
+        );
 
         const post_span = span.startChild({
             op: "function",
@@ -1067,7 +1107,7 @@ export function to_compose_target() {
     }
 }
 
-function handle_post_view_change(msg_list) {
+function handle_post_view_change(msg_list, opts) {
     const filter = msg_list.data.filter;
     scheduled_messages_feed_ui.update_schedule_message_indicator();
     typing_events.render_notifications_for_narrow();
@@ -1084,7 +1124,7 @@ function handle_post_view_change(msg_list) {
     message_view_header.render_title_area();
     narrow_title.update_narrow_title(filter);
     left_sidebar_navigation_area.handle_narrow_activated(filter);
-    stream_list.handle_narrow_activated(filter);
+    stream_list.handle_narrow_activated(filter, opts.change_hash, opts.show_more_topics);
     pm_list.handle_narrow_activated(filter);
     activity_ui.build_user_sidebar();
 }

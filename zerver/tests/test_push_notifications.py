@@ -8,7 +8,6 @@ from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple, Union
 from unittest import mock, skipUnless
 
 import aioapns
-import DNS
 import orjson
 import responses
 import time_machine
@@ -19,6 +18,7 @@ from django.http.response import ResponseHeaders
 from django.test import override_settings
 from django.utils.crypto import get_random_string
 from django.utils.timezone import now
+from dns.resolver import NoAnswer as DNSNoAnswer
 from requests.exceptions import ConnectionError
 from requests.models import PreparedRequest
 from typing_extensions import override
@@ -1668,7 +1668,7 @@ class AnalyticsBouncerTest(BouncerTestCase):
         do_set_realm_authentication_methods(zephyr_realm, new_auth_method_dict, acting_user=user)
 
         # Deactivation is synced.
-        do_deactivate_realm(zephyr_realm, acting_user=None)
+        do_deactivate_realm(zephyr_realm, acting_user=None, deactivation_reason="owner_request")
 
         send_server_data_to_push_bouncer()
         check_counts(5, 5, 1, 1, 7)
@@ -1968,7 +1968,7 @@ class AnalyticsBouncerTest(BouncerTestCase):
         self.assertEqual(remote_realm_count.remote_id, realm_count.id)
         self.assertEqual(remote_realm_count.remote_realm, None)
         self.assertEqual(remote_installation_count.remote_id, installation_count.id)
-        # InstallationCont/RemoteInstallationCount don't have realm/remote_realm foreign
+        # InstallationCount/RemoteInstallationCount don't have realm/remote_realm foreign
         # keys, because they're aggregated over all realms.
 
         self.assertEqual(remote_realm_audit_log.remote_id, realm_audit_log.id)
@@ -2098,7 +2098,7 @@ class AnalyticsBouncerTest(BouncerTestCase):
             "POST",
             "server/analytics",
             {
-                "realm_counts": '[{"id":1,"property":"invites_sent::day","subgroup":null,"end_time":574300800.0,"value":5,"realm":2}]',
+                "realm_counts": '[{"id":1,"property":"messages_sent:is_bot:hour","subgroup":"false","end_time":574300800.0,"value":5,"realm":2}]',
                 "installation_counts": "[]",
                 "version": '"2.0.6+git"',
             },
@@ -2659,7 +2659,7 @@ class AnalyticsBouncerTest(BouncerTestCase):
         )
 
         # Restore the deleted realm to verify that the bouncer correctly handles that
-        # by togglin off .realm_locally_deleted.
+        # by toggling off .realm_locally_deleted.
         restored_zephyr_realm = do_create_realm("zephyr", "Zephyr")
         restored_zephyr_realm.uuid = deleted_realm_uuid
         restored_zephyr_realm.save()
@@ -5239,7 +5239,7 @@ class PushBouncerSignupTest(ZulipTestCase):
 
         request["contact_email"] = "admin@example.com"
         result = self.client_post("/api/v1/remotes/server/register", request)
-        self.assert_json_error(result, "Invalid address.")
+        self.assert_json_error(result, "Invalid email address.")
 
         # An example disposable domain.
         request["contact_email"] = "admin@mailnator.com"
@@ -5247,17 +5247,24 @@ class PushBouncerSignupTest(ZulipTestCase):
         self.assert_json_error(result, "Please use your real email address.")
 
         request["contact_email"] = "admin@zulip.com"
-        with mock.patch("DNS.mxlookup", side_effect=DNS.Base.ServerError("test", 1)):
+        with mock.patch("zilencer.views.dns_resolver.Resolver") as resolver:
+            resolver.return_value.resolve.side_effect = DNSNoAnswer
+            resolver.return_value.resolve_name.return_value = ["whee"]
             result = self.client_post("/api/v1/remotes/server/register", request)
             self.assert_json_error(
-                result, "zulip.com does not exist or is not configured to accept email."
+                result, "zulip.com is invalid because it does not have any MX records"
             )
 
-        with mock.patch("DNS.mxlookup", return_value=[]):
+        with mock.patch("zilencer.views.dns_resolver.Resolver") as resolver:
+            resolver.return_value.resolve.side_effect = DNSNoAnswer
+            resolver.return_value.resolve_name.side_effect = DNSNoAnswer
             result = self.client_post("/api/v1/remotes/server/register", request)
-            self.assert_json_error(
-                result, "zulip.com does not exist or is not configured to accept email."
-            )
+            self.assert_json_error(result, "zulip.com does not exist")
+
+        with mock.patch("zilencer.views.dns_resolver.Resolver") as resolver:
+            resolver.return_value.resolve.return_value = ["whee"]
+            result = self.client_post("/api/v1/remotes/server/register", request)
+            self.assert_json_success(result)
 
 
 class TestUserPushIdentityCompat(ZulipTestCase):

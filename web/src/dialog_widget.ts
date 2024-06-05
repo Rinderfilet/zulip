@@ -61,7 +61,7 @@ function current_dialog_widget_selector(): string {
 export type DialogWidgetConfig = {
     html_heading: string;
     html_body: string;
-    on_click: (e: unknown) => void;
+    on_click: (e: JQuery.ClickEvent) => void;
     html_submit_button?: string;
     html_exit_button?: string;
     close_on_submit?: boolean;
@@ -120,6 +120,29 @@ export function close(on_hidden_callback?: () => void): void {
     modals.close(current_dialog_widget_id(), {on_hidden: on_hidden_callback});
 }
 
+export function get_current_values($inputs: JQuery): Record<string, unknown> {
+    const current_values: Record<string, unknown> = {};
+    $inputs.each(function () {
+        const property_name = $(this).attr("name")!;
+        if (property_name) {
+            if (this instanceof HTMLInputElement && this.type === "file" && this.files?.length) {
+                // If the input is a file input and a file has been selected, set value to file object
+                current_values[property_name] = this.files[0];
+            } else if (property_name === "edit_bot_owner") {
+                current_values[property_name] = $(this).find(".dropdown_widget_value").text();
+            } else if ($(this).hasClass("pill-container")) {
+                // Notably, this just concatenates the pill labels;
+                // good enough for checking if something has changed,
+                // but not appropriate for many other potential uses.
+                current_values[property_name] = $(this).find(".pill-value").text();
+            } else {
+                current_values[property_name] = $(this).val();
+            }
+        }
+    });
+    return current_values;
+}
+
 export function launch(conf: DialogWidgetConfig): string {
     // Mandatory fields:
     // * html_heading
@@ -175,28 +198,6 @@ export function launch(conf: DialogWidgetConfig): string {
     }
 
     const $submit_button = $dialog.find(".dialog_submit_button");
-
-    function get_current_values($inputs: JQuery): Record<string, unknown> {
-        const current_values: Record<string, unknown> = {};
-        $inputs.each(function () {
-            const property_name = $(this).attr("name")!;
-            if (property_name) {
-                if (
-                    this instanceof HTMLInputElement &&
-                    this.type === "file" &&
-                    this.files?.length
-                ) {
-                    // If the input is a file input and a file has been selected, set value to file object
-                    current_values[property_name] = this.files[0];
-                } else if (property_name === "edit_bot_owner") {
-                    current_values[property_name] = $(this).find(".dropdown_widget_value").text();
-                } else {
-                    current_values[property_name] = $(this).val();
-                }
-            }
-        });
-        return current_values;
-    }
 
     if (conf.update_submit_disabled_state_on_change) {
         const $inputs = $dialog.find(".modal__content").find("input,select,textarea,button");

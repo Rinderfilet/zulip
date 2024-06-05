@@ -901,15 +901,9 @@ export class MessageListView {
 
         // The messages we are being asked to render are shared with between
         // all messages lists. To prevent having both list views overwriting
-        // each others' data we will make a new message object to add data to
+        // each other's data we will make a new message object to add data to
         // for rendering.
         const message_containers = messages.map((message) => {
-            if (message.starred) {
-                message.starred_status = $t({defaultMessage: "Unstar"});
-            } else {
-                message.starred_status = $t({defaultMessage: "Star"});
-            }
-
             message.url = hash_util.by_conversation_and_time_url(message);
 
             return {msg: message};

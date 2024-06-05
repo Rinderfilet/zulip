@@ -1,6 +1,6 @@
 import $ from "jquery";
 import assert from "minimalistic-assert";
-import tippy from "tippy.js";
+import * as tippy from "tippy.js";
 
 import render_section_header from "../templates/buddy_list/section_header.hbs";
 import render_view_all_subscribers from "../templates/buddy_list/view_all_subscribers.hbs";
@@ -46,7 +46,11 @@ function total_subscriber_count(
         const pm_ids_list = [...pm_ids_set];
         // Plus one for the "me" user, who isn't in the recipients list (except
         // for when it's a private message conversation with only "me" in it).
-        if (pm_ids_list.length === 1 && people.is_my_user_id(pm_ids_list[0])) {
+        if (
+            pm_ids_list.length === 1 &&
+            pm_ids_list[0] !== undefined &&
+            people.is_my_user_id(pm_ids_list[0])
+        ) {
             return 1;
         }
         return pm_ids_list.length + 1;
@@ -166,7 +170,7 @@ export class BuddyList extends BuddyListConf {
                     // This will default to "bottom" placement for this tooltip.
                     placement = "auto";
                 }
-                tippy($elem[0], {
+                tippy.default($elem[0]!, {
                     // Because the buddy list subheadings are potential click targets
                     // for purposes having nothing to do with the subscriber count
                     // (collapsing/expanding), we delay showing the tooltip until the
@@ -610,22 +614,16 @@ export class BuddyList extends BuddyListConf {
 
     find_position(opts: {user_id: number; user_id_list: number[]}): number {
         const user_id = opts.user_id;
-        let i;
-
         const user_id_list = opts.user_id_list;
 
         const current_sub = narrow_state.stream_sub();
         const pm_ids_set = narrow_state.pm_ids_set();
 
-        for (i = 0; i < user_id_list.length; i += 1) {
-            const list_user_id = user_id_list[i];
-
-            if (this.compare_function(user_id, list_user_id, current_sub, pm_ids_set) < 0) {
-                return i;
-            }
-        }
-
-        return user_id_list.length;
+        const i = user_id_list.findIndex(
+            (list_user_id) =>
+                this.compare_function(user_id, list_user_id, current_sub, pm_ids_set) < 0,
+        );
+        return i === -1 ? user_id_list.length : i;
     }
 
     force_render(opts: {pos: number}): void {
@@ -767,7 +765,7 @@ export class BuddyList extends BuddyListConf {
 
         const elem = scroll_util
             .get_scroll_element($(this.scroll_container_selector))
-            .expectOne()[0];
+            .expectOne()[0]!;
 
         // Add a fudge factor.
         height += 10;

@@ -18,7 +18,7 @@ import * as timerender from "./timerender";
 import {user_settings} from "./user_settings";
 import * as util from "./util";
 
-export type ProfileData = {
+export type ProfileDatum = {
     value: string;
     rendered_value?: string | undefined;
 };
@@ -41,7 +41,7 @@ export type User = {
     timezone: string;
     avatar_url?: string | null;
     avatar_version: number;
-    profile_data: Record<number, ProfileData>;
+    profile_data: Record<number, ProfileDatum>;
     // used for fake user objects.
     is_missing_server_data?: boolean;
     // used for inaccessible user objects.
@@ -480,7 +480,7 @@ export function get_recipients(user_ids_string: string): string {
     return names.join(", ");
 }
 
-export function pm_reply_user_string(message: Message): string | undefined {
+export function pm_reply_user_string(message: Message | MessageWithBooleans): string | undefined {
     const user_ids = pm_with_user_ids(message);
 
     if (!user_ids) {
@@ -578,9 +578,7 @@ export function all_user_ids_in_pm(message: Message): number[] | undefined {
     return user_ids;
 }
 
-export function pm_with_user_ids(
-    message: Message & {reply_to?: string; url?: string},
-): number[] | undefined {
+export function pm_with_user_ids(message: Message | MessageWithBooleans): number[] | undefined {
     if (message.type !== "private") {
         return undefined;
     }
@@ -620,10 +618,10 @@ export function pm_perma_link(message: Message): string | undefined {
     return url;
 }
 
-export function pm_with_url(message: Message): string | undefined {
+export function pm_with_url(message: Message | MessageWithBooleans): string | undefined {
     const user_ids = pm_with_user_ids(message);
 
-    if (!user_ids) {
+    if (user_ids?.[0] === undefined) {
         return undefined;
     }
 
@@ -712,7 +710,7 @@ export function emails_to_slug(emails_string: string): string | undefined {
 
     const emails = emails_string.split(",");
 
-    if (emails.length === 1) {
+    if (emails.length === 1 && emails[0] !== undefined) {
         const person = get_by_email(emails[0]);
         assert(person !== undefined, "Unknown person in emails_to_slug");
         const name = person.full_name;
@@ -739,7 +737,7 @@ export function slug_to_emails(slug: string): string | undefined {
     */
     const m = /^([\d,]+)(-.*)?/.exec(slug);
     if (m) {
-        let user_ids_string = m[1];
+        let user_ids_string = m[1]!;
         user_ids_string = exclude_me_from_string(user_ids_string);
         return user_ids_string_to_emails_string(user_ids_string);
     }
@@ -809,6 +807,7 @@ export function user_can_direct_message(recipient_ids_string: string): boolean {
     const recipient_ids = user_ids_string_to_ids_array(recipient_ids_string);
     if (
         recipient_ids.length === 1 &&
+        recipient_ids[0] !== undefined &&
         (is_valid_bot_user(recipient_ids[0]) || is_my_user_id(recipient_ids[0]))
     ) {
         return true;
@@ -1533,30 +1532,23 @@ export function get_user_by_id_assert_valid(
 }
 
 function get_involved_people(message: MessageWithBooleans): DisplayRecipientUser[] {
-    let involved_people: DisplayRecipientUser[];
+    let involved_people: DisplayRecipientUser[] = [];
 
-    switch (message.type) {
-        case "stream":
-            involved_people = [
-                {
-                    full_name: message.sender_full_name,
-                    id: message.sender_id,
-                    email: message.sender_email,
-                    is_mirror_dummy: false,
-                },
-            ];
-            break;
-
-        case "private":
-            assert(
-                typeof message.display_recipient !== "string",
-                "Private messages should have list of recipients",
-            );
-            involved_people = message.display_recipient;
-            break;
-
-        default:
-            involved_people = [];
+    if (message.type === "stream") {
+        involved_people = [
+            {
+                full_name: message.sender_full_name,
+                id: message.sender_id,
+                email: message.sender_email,
+                is_mirror_dummy: false,
+            },
+        ];
+    } else if (message.type === "private") {
+        assert(
+            typeof message.display_recipient !== "string",
+            "Private messages should have list of recipients",
+        );
+        involved_people = message.display_recipient;
     }
 
     return involved_people;
@@ -1669,7 +1661,7 @@ export function set_full_name(person_obj: User, new_full_name: string): void {
 
 export function set_custom_profile_field_data(
     user_id: number,
-    field: {id: number} & ProfileData,
+    field: {id: number} & ProfileDatum,
 ): void {
     if (field.id === undefined) {
         blueslip.error("Trying to set undefined field id");
@@ -1708,7 +1700,7 @@ export function my_current_user_id(): number {
     return my_user_id;
 }
 
-export function my_custom_profile_data(field_id: number): ProfileData | null | undefined {
+export function my_custom_profile_data(field_id: number): ProfileDatum | null | undefined {
     if (field_id === undefined) {
         blueslip.error("Undefined field id");
         return undefined;
@@ -1716,7 +1708,10 @@ export function my_custom_profile_data(field_id: number): ProfileData | null | u
     return get_custom_profile_data(my_user_id, field_id);
 }
 
-export function get_custom_profile_data(user_id: number, field_id: number): ProfileData | null {
+export function get_custom_profile_data(
+    user_id: number,
+    field_id: number,
+): ProfileDatum | null | undefined {
     const person = get_by_user_id(user_id);
     const profile_data = person.profile_data;
     if (profile_data === undefined) {
@@ -1728,13 +1723,13 @@ export function get_custom_profile_data(user_id: number, field_id: number): Prof
 export function get_custom_fields_by_type(
     user_id: number,
     field_type: number,
-): ProfileData[] | null {
+): (ProfileDatum | undefined)[] | null {
     const person = get_by_user_id(user_id);
     const profile_data = person.profile_data;
     if (profile_data === undefined) {
         return null;
     }
-    const filteredProfileData: ProfileData[] = [];
+    const filteredProfileData: (ProfileDatum | undefined)[] = [];
     for (const field of realm.custom_profile_fields) {
         if (field.type === field_type) {
             filteredProfileData.push(profile_data[field.id]);

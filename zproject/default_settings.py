@@ -191,6 +191,7 @@ MEMCACHED_LOCATION = "127.0.0.1:11211"
 MEMCACHED_USERNAME = None if get_secret("memcached_password") is None else "zulip@localhost"
 RABBITMQ_HOST = "127.0.0.1"
 RABBITMQ_PORT = 5672
+RABBITMQ_VHOST = "/"
 RABBITMQ_USERNAME = "zulip"
 RABBITMQ_USE_TLS = False
 REDIS_HOST = "127.0.0.1"
@@ -484,7 +485,7 @@ TERMS_OF_SERVICE_MESSAGE: Optional[str] = None
 # Configuration for JWT auth (sign in and API key fetch)
 JWT_AUTH_KEYS: Dict[str, JwtAuthKey] = {}
 
-# https://docs.djangoproject.com/en/3.2/ref/settings/#std:setting-SERVER_EMAIL
+# https://docs.djangoproject.com/en/5.0/ref/settings/#std:setting-SERVER_EMAIL
 # Django setting for what from address to use in error emails.
 SERVER_EMAIL = ZULIP_ADMINISTRATOR
 # Django setting for who receives error emails.
@@ -575,7 +576,7 @@ GOOGLE_ANALYTICS_ID: Optional[str] = None
 # This is overridden by dev_settings.py for droplets.
 IS_DEV_DROPLET = False
 
-# Used by puppet/kandra/files/cron.d/check_send_receive_time.
+# Used by the `check_send_receive_time` monitoring tool.
 NAGIOS_BOT_HOST = SYSTEM_BOT_REALM + "." + EXTERNAL_HOST
 
 # Use half of the available CPUs for data import purposes.
@@ -634,3 +635,9 @@ CAN_ACCESS_ALL_USERS_GROUP_LIMITS_PRESENCE = False
 SIGNED_ACCESS_TOKEN_VALIDITY_IN_SECONDS = 60
 
 CUSTOM_AUTHENTICATION_WRAPPER_FUNCTION: Optional[Callable[..., Any]] = None
+
+# Whether we allow settings to be set to a collection of users and
+# groups as described in api_docs/group-setting-values.md. Set to
+# False in production, as we can only handle named user groups in the
+# web app settings UI.
+ALLOW_ANONYMOUS_GROUP_VALUED_SETTINGS = False

@@ -100,7 +100,7 @@
  *
  * 10. Allow typeahead to be located next to its input field in the DOM
  *
- *   We add a new `parentElement` option which the typeahead can
+ *   We add a new `non_tippy_parent_element` option which the typeahead can
  *   append to, where before it could only be appended to `body`.
  *   Since it's in the right part of the DOM, we don't need to do
  *   the manual positioning in the show() function.
@@ -126,19 +126,19 @@
  *   turned off so that tab only does one thing while focus is in the
  *   typeahead -- move focus to the next element.
  *
- * 14. Don't act on blurs that change focus within the `parentElement`:
+ * 14. Don't act on blurs that change focus within the `non_tippy_parent_element`:
  *
  *   This allows us to have things like a close button, and be able
  *   to move focus there without the typeahead closing.
  *
- * 15. To position typeaheads, we use Tippyjs.
+ * 15. To position typeaheads, we use Tippyjs except for typeaheads that are
+ *    appended to a `non_tippy_parent_element`.
  * ============================================================ */
 
 import $ from "jquery";
 import assert from "minimalistic-assert";
 import {insertTextIntoField} from "text-field-edit";
-import type {Instance} from "tippy.js";
-import tippy from "tippy.js";
+import * as tippy from "tippy.js";
 
 import {get_string_diff} from "./util";
 
@@ -231,9 +231,9 @@ export class Typeahead<ItemType extends string | object> {
     naturalSearch: boolean;
     stopAdvance: boolean;
     advanceKeyCodes: number[];
-    parentElement: string | undefined;
+    non_tippy_parent_element: string | undefined;
     values: WeakMap<HTMLElement, ItemType>;
-    instance: Instance | undefined;
+    instance: tippy.Instance | undefined;
 
     constructor(input_element: TypeaheadInputElement, options: TypeaheadOptions<ItemType>) {
         this.input_element = input_element;
@@ -248,8 +248,8 @@ export class Typeahead<ItemType extends string | object> {
         this.highlighter_html = options.highlighter_html;
         this.updater = options.updater ?? ((items) => this.defaultUpdater(items));
         this.$container = $(CONTAINER_HTML);
-        if (options.parentElement) {
-            $(options.parentElement).append(this.$container);
+        if (options.non_tippy_parent_element) {
+            $(options.non_tippy_parent_element).append(this.$container);
         }
         this.$menu = $(MENU_HTML).appendTo(this.$container);
         this.$header = $(HEADER_ELEMENT_HTML).appendTo(this.$container);
@@ -269,7 +269,7 @@ export class Typeahead<ItemType extends string | object> {
         this.tabIsEnter = options.tabIsEnter ?? true;
         this.helpOnEmptyStrings = options.helpOnEmptyStrings ?? false;
         this.naturalSearch = options.naturalSearch ?? false;
-        this.parentElement = options.parentElement;
+        this.non_tippy_parent_element = options.non_tippy_parent_element;
         this.values = new WeakMap();
 
         // The naturalSearch option causes arrow keys to immediately
@@ -279,7 +279,7 @@ export class Typeahead<ItemType extends string | object> {
     }
 
     select(e?: JQuery.ClickEvent | JQuery.KeyUpEvent | JQuery.KeyDownEvent): this {
-        const val = this.values.get(this.$menu.find(".active")[0]);
+        const val = this.values.get(this.$menu.find(".active")[0]!);
         assert(val !== undefined);
         if (this.input_element.type === "contenteditable") {
             this.input_element.$element
@@ -295,8 +295,8 @@ export class Typeahead<ItemType extends string | object> {
             const [from, to_before, to_after] = get_string_diff(element_val, after_text);
             const replacement = after_text.slice(from, to_after);
             // select / highlight the minimal text to be replaced
-            this.input_element.$element[0].setSelectionRange(from, to_before);
-            insertTextIntoField(this.input_element.$element[0], replacement);
+            this.input_element.$element[0]!.setSelectionRange(from, to_before);
+            insertTextIntoField(this.input_element.$element[0]!, replacement);
             this.input_element.$element.trigger("change");
         }
 
@@ -304,7 +304,7 @@ export class Typeahead<ItemType extends string | object> {
     }
 
     set_value(): void {
-        const val = this.values.get(this.$menu.find(".active")[0]);
+        const val = this.values.get(this.$menu.find(".active")[0]!);
         assert(typeof val === "string");
         if (this.input_element.type === "contenteditable") {
             this.input_element.$element.text(val);
@@ -335,12 +335,12 @@ export class Typeahead<ItemType extends string | object> {
         }
         this.mouse_moved_since_typeahead = false;
 
-        if (this.parentElement) {
+        if (this.non_tippy_parent_element) {
             this.$container.show();
             // We don't need tippy to position typeaheads which already know where they should be.
             return this;
         }
-        this.instance = tippy(this.input_element.$element[0], {
+        this.instance = tippy.default(this.input_element.$element[0]!, {
             // Lets typeahead take the width needed to fit the content
             // and wraps it if it overflows the visible container.
             maxWidth: "none",
@@ -371,7 +371,7 @@ export class Typeahead<ItemType extends string | object> {
             interactive: true,
             appendTo: () => document.body,
             showOnCreate: true,
-            content: this.$container[0],
+            content: this.$container[0]!,
             // We expect the typeahead creator to handle when to hide / show the typeahead.
             trigger: "manual",
             arrow: false,
@@ -379,11 +379,6 @@ export class Typeahead<ItemType extends string | object> {
             // We have event handlers to hide the typeahead, so we
             // don't want tippy to hide it for us.
             hideOnClick: false,
-            onHidden: () => {
-                assert(this.instance !== undefined);
-                this.instance.destroy();
-                this.instance = undefined;
-            },
         });
 
         return this;
@@ -391,10 +386,11 @@ export class Typeahead<ItemType extends string | object> {
 
     hide(): this {
         this.shown = false;
-        if (this.parentElement) {
+        if (this.non_tippy_parent_element) {
             this.$container.hide();
         } else {
-            this.instance?.hide();
+            this.instance?.destroy();
+            this.instance = undefined;
         }
 
         if (this.closeInputFieldOnHide !== undefined) {
@@ -453,7 +449,7 @@ export class Typeahead<ItemType extends string | object> {
     render(final_items: ItemType[], matching_items: ItemType[]): this {
         const $items: JQuery[] = final_items.map((item) => {
             const $i = $(ITEM_HTML);
-            this.values.set($i[0], item);
+            this.values.set($i[0]!, item);
             const item_html = this.highlighter_html(item, this.query) ?? "";
             const $item_html = $i.find("a").html(item_html);
 
@@ -465,7 +461,7 @@ export class Typeahead<ItemType extends string | object> {
             return $i;
         });
 
-        $items[0].addClass("active");
+        $items[0]!.addClass("active");
         this.$menu.empty().append($items);
         return this;
     }
@@ -475,7 +471,7 @@ export class Typeahead<ItemType extends string | object> {
         let $next = $active.next();
 
         if (!$next.length) {
-            $next = $(this.$menu.find("li")[0]);
+            $next = this.$menu.find("li").first();
         }
 
         $next.addClass("active");
@@ -625,12 +621,12 @@ export class Typeahead<ItemType extends string | object> {
 
                 this.select(e);
 
-                if (this.input_element.$element[0].id === "stream_message_recipient_topic") {
+                if (this.input_element.$element[0]!.id === "stream_message_recipient_topic") {
                     assert(this.input_element.type === "input");
                     // Move the cursor to the end of the topic
                     const topic_length = this.input_element.$element.val()!.length;
-                    this.input_element.$element[0].selectionStart = topic_length;
-                    this.input_element.$element[0].selectionEnd = topic_length;
+                    this.input_element.$element[0]!.selectionStart = topic_length;
+                    this.input_element.$element[0]!.selectionEnd = topic_length;
                 }
 
                 break;
@@ -657,7 +653,7 @@ export class Typeahead<ItemType extends string | object> {
                 // when shift (keycode 16) + tabbing to the topic field
                 if (
                     pseudo_keycode === 16 &&
-                    this.input_element.$element[0].id === "stream_message_recipient_topic"
+                    this.input_element.$element[0]!.id === "stream_message_recipient_topic"
                 ) {
                     return;
                 }
@@ -680,9 +676,9 @@ export class Typeahead<ItemType extends string | object> {
         // Blurs that move focus to elsewhere within the parent element shouldn't
         // hide the typeahead.
         if (
-            this.parentElement !== undefined &&
+            this.non_tippy_parent_element !== undefined &&
             e.relatedTarget &&
-            $(e.relatedTarget).parents(this.parentElement).length > 0
+            $(e.relatedTarget).parents(this.non_tippy_parent_element).length > 0
         ) {
             return;
         }
@@ -758,7 +754,7 @@ type TypeaheadOptions<ItemType> = {
     on_escape?: () => void;
     openInputFieldOnKeyUp?: () => void;
     option_label?: (matching_items: ItemType[], item: ItemType) => string | false;
-    parentElement?: string;
+    non_tippy_parent_element?: string;
     sorter: (items: ItemType[], query: string) => ItemType[];
     stopAdvance?: boolean;
     tabIsEnter?: boolean;

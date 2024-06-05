@@ -111,6 +111,9 @@ let dropdown_filters = new Set<string>();
 const recent_conversation_key_prefix = "recent_conversation:";
 
 let is_initial_message_fetch_pending = true;
+// We wait for rows to render and restore focus before processing
+// any new events.
+let is_waiting_for_revive_current_focus = true;
 
 export function set_initial_message_fetch_status(value: boolean): void {
     is_initial_message_fetch_pending = value;
@@ -175,9 +178,22 @@ let oldest_message_timestamp = Number.POSITIVE_INFINITY;
 function set_oldest_message_date(msg_list_data: MessageListData): void {
     const has_found_oldest = msg_list_data.fetch_status.has_found_oldest();
     const has_found_newest = msg_list_data.fetch_status.has_found_newest();
+    const oldest_message_in_data = msg_list_data.first_including_muted();
+    if (oldest_message_in_data) {
+        oldest_message_timestamp = Math.min(
+            oldest_message_in_data.timestamp,
+            oldest_message_timestamp,
+        );
+    }
 
-    const first_message_timestamp = msg_list_data.first()?.timestamp ?? Number.POSITIVE_INFINITY;
-    oldest_message_timestamp = Math.min(first_message_timestamp, oldest_message_timestamp);
+    if (oldest_message_timestamp === Number.POSITIVE_INFINITY && !has_found_oldest) {
+        // This should only happen either very early in loading the
+        // message list, since it requires the msg_list_data object
+        // being empty, without having server confirmation that's the
+        // case. Wait for server data to do anything in that
+        // situation.
+        return;
+    }
 
     if (has_found_oldest) {
         loading_state = ALL_MESSAGES_LOADED;
@@ -273,6 +289,7 @@ function get_row_type(row: number): string {
 
     const current_list = topics_widget.get_current_list();
     const current_row = current_list[row];
+    assert(current_row !== undefined);
     return current_row.type;
 }
 
@@ -323,7 +340,7 @@ function set_table_focus(row: number, col: number, using_keyboard = false): bool
     if (using_keyboard) {
         const scroll_element = $(
             "#recent_view_table .table_fix_head .simplebar-content-wrapper",
-        )[0];
+        )[0]!;
         const half_height_of_visible_area = scroll_element.offsetHeight / 2;
         const topic_offset = topic_offset_to_visible_area($topic_row);
 
@@ -447,14 +464,21 @@ export function hide_loading_indicator(): void {
     loading.destroy_indicator($("#recent_view_loading_messages_indicator"));
 }
 
-export function process_messages(messages: Message[], msg_list_data?: MessageListData): void {
+export function process_messages(
+    messages: Message[],
+    rows_order_changed = true,
+    msg_list_data?: MessageListData,
+): void {
     // Always synced with messages in all_messages_data.
 
     let conversation_data_updated = false;
+    const updated_rows = new Set<string>();
     if (messages.length > 0) {
         for (const msg of messages) {
             if (recent_view_data.process_message(msg)) {
                 conversation_data_updated = true;
+                const key = recent_view_util.get_key_from_message(msg);
+                updated_rows.add(key);
             }
         }
     }
@@ -467,7 +491,12 @@ export function process_messages(messages: Message[], msg_list_data?: MessageLis
 
     // Only rerender if conversation data actually changed.
     if (conversation_data_updated) {
-        complete_rerender();
+        if (!rows_order_changed) {
+            // If rows order didn't change, we can just rerender the affected rows.
+            bulk_inplace_rerender([...updated_rows]);
+        } else {
+            complete_rerender();
+        }
     }
 }
 
@@ -865,7 +894,24 @@ export function filters_should_hide_row(topic_data: ConversationData): boolean {
     return false;
 }
 
-export function inplace_rerender(topic_key: string): boolean {
+export function bulk_inplace_rerender(row_keys: string[]): void {
+    if (!topics_widget) {
+        return;
+    }
+
+    // When doing bulk rerender, we assume that order of rows are not going
+    // to change by default. Row insertion can still change the order but
+    // we ensure the list remains sorted after insertion.
+    topics_widget.replace_list_data(get_list_data_for_widget(), false);
+    topics_widget.filter_and_sort();
+    for (const key of row_keys) {
+        inplace_rerender(key, true);
+    }
+
+    setTimeout(revive_current_focus, 0);
+}
+
+export function inplace_rerender(topic_key: string, is_bulk_rerender?: boolean): boolean {
     if (!recent_view_util.is_visible()) {
         return false;
     }
@@ -880,11 +926,17 @@ export function inplace_rerender(topic_key: string): boolean {
     // if a topic is rendered since the `filtered_list` might have
     // already been updated via other calls.
     const is_topic_rendered = $topic_row.length;
-    // Resorting the topics_widget is important for the case where we
-    // are rerendering because of message editing or new messages
-    // arriving, since those operations often change the sort key.
     assert(topics_widget !== undefined);
-    topics_widget.filter_and_sort();
+    if (!is_bulk_rerender) {
+        // Resorting the topics_widget is important for the case where we
+        // are rerendering because of message editing or new messages
+        // arriving, since those operations often change the sort key.
+        //
+        // NOTE: This doesn't add any new entry to the original list but updates the filtered list
+        // based on the current filters and updated row data.
+        topics_widget.filter_and_sort();
+    }
+
     const current_topics_list = topics_widget.get_current_list();
     if (is_topic_rendered && filters_should_hide_row(topic_data)) {
         // Since the row needs to be removed from DOM, we need to adjust `row_focus`
@@ -915,7 +967,9 @@ export function inplace_rerender(topic_key: string): boolean {
             ),
         );
     }
-    setTimeout(revive_current_focus, 0);
+    if (!is_bulk_rerender) {
+        setTimeout(revive_current_focus, 0);
+    }
     return true;
 }
 
@@ -1076,14 +1130,14 @@ function topic_offset_to_visible_area($topic_row: JQuery): string | undefined {
     }
     const $scroll_container = $("#recent_view_table .table_fix_head");
     const thead_height = $scroll_container.find("thead").outerHeight(true)!;
-    const scroll_container_props = $scroll_container[0].getBoundingClientRect();
+    const scroll_container_props = $scroll_container[0]!.getBoundingClientRect();
 
     // Since user cannot see row under thead, exclude it as part of the scroll container.
     const scroll_container_top = scroll_container_props.top + thead_height;
     const compose_height = $("#compose").outerHeight(true)!;
     const scroll_container_bottom = scroll_container_props.bottom - compose_height;
 
-    const topic_props = $topic_row[0].getBoundingClientRect();
+    const topic_props = $topic_row[0]!.getBoundingClientRect();
 
     // Topic is above the visible scroll region.
     if (topic_props.top < scroll_container_top) {
@@ -1098,7 +1152,11 @@ function topic_offset_to_visible_area($topic_row: JQuery): string | undefined {
 }
 
 function recenter_focus_if_off_screen(): void {
-    const table_wrapper_element = $("#recent_view_table .table_fix_head")[0];
+    if (is_waiting_for_revive_current_focus) {
+        return;
+    }
+
+    const table_wrapper_element = $("#recent_view_table .table_fix_head")[0]!;
     const $topic_rows = $("#recent_view_table table tbody tr");
 
     if (row_focus >= $topic_rows.length) {
@@ -1120,8 +1178,21 @@ function recenter_focus_if_off_screen(): void {
         const topic_center_y = (position.top + position.bottom) / 2;
 
         const topic_element = document.elementFromPoint(topic_center_x, topic_center_y);
-        assert(topic_element !== null);
-        row_focus = $topic_rows.index($(topic_element).closest("tr")[0]);
+        if (topic_element === null) {
+            // There are two theoretical reasons that the center
+            // element might be null. One is that we haven't rendered
+            // the view yet; but in that case, we should have returned
+            // early checking is_waiting_for_revive_current_focus:
+            //
+            // The other possibility is that the table is too short
+            // for there to be an topic row element at the center of
+            // the table region; in that case, we just select the last
+            // element.
+            row_focus = $topic_rows.length - 1;
+        } else {
+            row_focus = $topic_rows.index($(topic_element).closest("tr")[0]);
+        }
+
         set_table_focus(row_focus, col_focus);
     }
 }
@@ -1140,7 +1211,10 @@ function is_scroll_position_for_render(scroll_container: HTMLElement): boolean {
 
 function callback_after_render(): void {
     update_load_more_banner();
-    setTimeout(revive_current_focus, 0);
+    setTimeout(() => {
+        revive_current_focus();
+        is_waiting_for_revive_current_focus = false;
+    }, 0);
 }
 
 function filter_click_handler(
@@ -1168,13 +1242,17 @@ function filter_click_handler(
     topics_widget.hard_redraw();
 }
 
+function get_list_data_for_widget(): ConversationData[] {
+    return [...recent_view_data.get_conversations().values()];
+}
+
 export function complete_rerender(): void {
     if (!recent_view_util.is_visible()) {
         return;
     }
 
     // Show topics list
-    const mapped_topic_values = [...recent_view_data.get_conversations().values()];
+    const mapped_topic_values = get_list_data_for_widget();
 
     if (topics_widget) {
         topics_widget.replace_list_data(mapped_topic_values);
@@ -1268,6 +1346,7 @@ function filter_buttons(): JQuery {
 }
 
 export function hide(): void {
+    is_waiting_for_revive_current_focus = true;
     views_util.hide({
         $view: $("#recent_view"),
         set_visible: recent_view_util.set_visible,
@@ -1281,7 +1360,9 @@ function is_focus_at_last_table_row(): boolean {
 
 function has_unread(row: number): boolean {
     assert(topics_widget !== undefined);
-    const last_msg_id = topics_widget.get_current_list()[row].last_msg_id;
+    const current_row = topics_widget.get_current_list()[row];
+    assert(current_row !== undefined);
+    const last_msg_id = current_row.last_msg_id;
     const last_msg = message_store.get(last_msg_id);
     assert(last_msg !== undefined);
     if (last_msg.type === "stream") {
@@ -1619,7 +1700,7 @@ export function initialize({
     on_click_participant: (avatar_element: Element, participant_user_id: number) => void;
     on_mark_pm_as_read: (user_ids_string: string) => void;
     on_mark_topic_as_read: (stream_id: number, topic: string) => void;
-    maybe_load_older_messages: () => void;
+    maybe_load_older_messages: (first_unread_unmuted_message_id: number) => void;
 }): void {
     load_filters();
 
@@ -1800,7 +1881,7 @@ export function initialize({
             $(".recent-view-load-more-container .fetch-messages-button .loading-indicator"),
             {width: 20},
         );
-        maybe_load_older_messages();
+        maybe_load_older_messages(unread.first_unread_unmuted_message_id);
     });
 
     $(document).on("compose_canceled.zulip", () => {

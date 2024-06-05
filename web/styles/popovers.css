@@ -873,11 +873,15 @@ ul {
     /* The emoji popover has a different background color for the
        header and footer, so we customize the arrow to match this color. */
     .tippy-box[data-placement="top"] .tippy-arrow::before {
-        border-top-color: hsl(0deg 0% 93%);
+        border-top-color: var(--color-border-emoji-picker-tippy-arrow);
     }
 
     .tippy-box[data-placement="bottom"] .tippy-arrow::before {
-        border-bottom-color: hsl(0deg 0% 93%);
+        border-bottom-color: var(--color-border-emoji-picker-tippy-arrow);
+    }
+
+    .tippy-box[data-placement="left"] .tippy-arrow::before {
+        border-left-color: var(--color-border-emoji-picker-tippy-arrow);
     }
 }
 
@@ -1343,10 +1347,11 @@ ul {
 }
 
 #gear-menu-dropdown {
-    .org-info {
+    .org-info-container {
         padding: 9px 0 5px;
+        border-bottom: solid 1px var(--color-border-popover-menu-separator);
 
-        & li {
+        .org-info {
             display: flex;
             justify-content: flex-start;
             font-size: 15px;
@@ -1420,23 +1425,14 @@ ul {
     }
 }
 
-ul.popover-menu-outer-list {
+ul.popover-menu-list {
     list-style: none;
     margin: 0;
+    padding: 4px 0;
 
-    li.popover-menu-outer-list-item {
+    li.popover-menu-separator {
+        margin: 4px 0;
         border-bottom: solid 1px var(--color-border-popover-menu-separator);
-
-        &:last-child {
-            border-bottom: none;
-        }
-
-        ul.popover-menu-inner-list {
-            margin: 0;
-            padding: 4px 0;
-            list-style: none;
-            background: none !important;
-        }
     }
 }
 
